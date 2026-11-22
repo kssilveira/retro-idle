@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>retro-idle — Game Boy Emulator</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #111827;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      transition: outline-color 120ms ease;
+    }
+
+    body.dragging {
+      outline: 3px dashed var(--accent);
+      outline-offset: -10px;
+    }
+
+    main {
+      width: min(520px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    #screen {
+      width: min(480px, 100%);
+      aspect-ratio: 160 / 144;
+      height: auto;
+      background: #0f172a;
+      border: 2px solid var(--border);
+      border-radius: 6px;
+      image-rendering: pixelated;
+      display: block;
+    }
+
+    .controls {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .file-label,
+    button {
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1e293b;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .file-label:hover,
+    button:not(:disabled):hover {
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #rom-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #status {
+      width: 100%;
+      text-align: center;
+      font-size: 0.875rem;
+      color: var(--muted);
+      min-height: 1.25em;
+    }
+
+    .legend {
+      margin: 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    kbd {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.75rem;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>retro-idle</h1>
+    <canvas id="screen" width="160" height="144"></canvas>
+
+    <div class="controls">
+      <label class="file-label" for="rom-input">Load ROM (.gb / .gbc / .zip)</label>
+      <input type="file" id="rom-input" accept=".gb,.gbc,.zip" />
+      <button type="button" id="toggle-play" disabled>Pause</button>
+      <button type="button" id="reset-btn" disabled>Reset</button>
+    </div>
+
+    <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
+
+    <p class="legend">
+      D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
+      A: <kbd>X</kbd> &middot;
+      B: <kbd>Z</kbd> &middot;
+      Start: <kbd>Enter</kbd> &middot;
+      Select: <kbd>Shift</kbd> &middot;
+      Gamepad supported
+    </p>
+  </main>
+
+  <script type="module">
+    import { WasmBoy } from 'https://cdn.jsdelivr.net/npm/wasmboy@0.7.1/dist/wasmboy.wasm.esm.js';
+
+    const canvas = document.getElementById('screen');
+    const romInput = document.getElementById('rom-input');
+    const togglePlayBtn = document.getElementById('toggle-play');
+    const resetBtn = document.getElementById('reset-btn');
+    const statusEl = document.getElementById('status');
+
+    const CARTRIDGE_TYPES = {
+      0x00: 'ROM ONLY',
+      0x01: 'MBC1',
+      0x02: 'MBC1 + RAM',
+      0x03: 'MBC1 + RAM + BATTERY',
+      0x05: 'MBC2',
+      0x06: 'MBC2 + BATTERY',
+      0x0f: 'MBC3 + TIMER + BATTERY',
+      0x10: 'MBC3 + TIMER + RAM + BATTERY',
+      0x11: 'MBC3',
+      0x12: 'MBC3 + RAM',
+      0x13: 'MBC3 + RAM + BATTERY',
+      0x19: 'MBC5',
+      0x1a: 'MBC5 + RAM',
+      0x1b: 'MBC5 + RAM + BATTERY',
+      0x1c: 'MBC5 + RUMBLE',
+      0x1d: 'MBC5 + RUMBLE + RAM',
+      0x1e: 'MBC5 + RUMBLE + RAM + BATTERY',
+    };
+
+    let currentHeaderText = '';
+    let hasLoadedRom = false;
+    let isBusy = false;
+
+    function blurActiveElement() {
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }
+
+    function syncControls() {
+      togglePlayBtn.disabled = !hasLoadedRom || isBusy;
+      resetBtn.disabled = !hasLoadedRom || isBusy;
+      if (!hasLoadedRom) {
+        togglePlayBtn.textContent = 'Pause';
+        return;
+      }
+      const playing = WasmBoy.isPlaying();
+      togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
+      statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}`;
+    }
+
+    function parseRomHeader(bytes) {
+      if (!bytes || bytes.length < 0x0150) {
+        return null;
+      }
+      let title = '';
+      for (let i = 0x0134; i <= 0x0142; i++) {
+        const ch = bytes[i];
+        if (ch === 0) break;
+        if (ch >= 0x20 && ch <= 0x7e) {
+          title += String.fromCharCode(ch);
+        }
+      }
+      title = title.trim() || 'UNKNOWN';
+      const typeCode = bytes[0x0147];
+      const mbc = CARTRIDGE_TYPES[typeCode] || `TYPE 0x${typeCode.toString(16).padStart(2, '0').toUpperCase()}`;
+      return { title, mbc, typeCode };
+    }
+
+    async function extractHeader(romSource, fileName) {
+      if (romSource instanceof Uint8Array) {
+        return parseRomHeader(romSource);
+      }
+      if (romSource instanceof Blob && !String(fileName || '').toLowerCase().endsWith('.zip')) {
+        const slice = await romSource.slice(0, 0x0150).arrayBuffer();
+        return parseRomHeader(new Uint8Array(slice));
+      }
+      return null;
+    }
+
+    function resumeAudioSafely() {
+      try {
+        const result = WasmBoy.resumeAudioContext();
+        if (result && typeof result.catch === 'function') {
+          result.catch(() => {});
+        }
+      } catch {
+        // Ignore audio context autoplay restrictions until user gesture
+      }
+    }
+
+    async function loadRom(romSource, fileName) {
+      if (!romSource || isBusy) return;
+      const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
+      isBusy = true;
+      syncControls();
+      statusEl.textContent = `Loading ${label}...`;
+
+      try {
+        resumeAudioSafely();
+        await WasmBoy.config(
+          {
+            headless: false,
+            isAudioEnabled: true,
+            isGbcEnabled: true,
+            isGbcColorizationEnabled: true,
+            enableBootROMIfAvailable: false,
+          },
+          canvas
+        );
+
+        await WasmBoy.loadROM(romSource);
+        await WasmBoy.play();
+
+        const header = await extractHeader(romSource, label);
+        currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
+        hasLoadedRom = true;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Failed to load ROM: ${err?.message || err}`;
+      } finally {
+        isBusy = false;
+        if (hasLoadedRom && !statusEl.textContent.startsWith('Failed')) {
+          syncControls();
+        } else {
+          togglePlayBtn.disabled = !hasLoadedRom;
+          resetBtn.disabled = !hasLoadedRom;
+        }
+        blurActiveElement();
+      }
+    }
+
+    romInput.addEventListener('change', async () => {
+      const file = romInput.files && romInput.files[0];
+      romInput.value = '';
+      if (file) {
+        await loadRom(file, file.name);
+      } else {
+        blurActiveElement();
+      }
+    });
+
+    async function runTransportAction(action) {
+      if (isBusy || !hasLoadedRom) return;
+      isBusy = true;
+      togglePlayBtn.disabled = true;
+      resetBtn.disabled = true;
+      try {
+        resumeAudioSafely();
+        await action();
+      } finally {
+        isBusy = false;
+        syncControls();
+        blurActiveElement();
+      }
+    }
+
+    togglePlayBtn.addEventListener('click', () =>
+      runTransportAction(() => (WasmBoy.isPlaying() ? WasmBoy.pause() : WasmBoy.play()))
+    );
+
+    resetBtn.addEventListener('click', () =>
+      runTransportAction(async () => {
+        await WasmBoy.reset();
+        await WasmBoy.play();
+      })
+    );
+
+    let dragDepth = 0;
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragDepth++;
+      document.body.classList.add('dragging');
+    });
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) {
+        document.body.classList.remove('dragging');
+      }
+    });
+    window.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      document.body.classList.remove('dragging');
+      const file = e.dataTransfer?.files?.[0];
+      if (file) {
+        await loadRom(file, file.name);
+      }
+    });
+
+    window.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
+    window.addEventListener('keydown', resumeAudioSafely, { passive: true });
+
+    const params = new URLSearchParams(window.location.search);
+    const romUrl = params.get('rom');
+    if (romUrl) {
+      loadRom(romUrl, romUrl.split('/').pop());
+    }
+
+    window.__retroIdle = { WasmBoy, loadRom };
+  </script>
+</body>
+</html>
