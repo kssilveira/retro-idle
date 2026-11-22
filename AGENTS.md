@@ -1,6 +1,6 @@
 # AGENTS.md — Handoff Context for `retro-idle`
 
-## 1. Current Repository State (commit `59e2732`)
+## 1. Current Repository State (commit `24e2732`)
 - **Zero-build playable browser prototype** in [index.html](index.html) powered by vendored MIT-licensed `binjgb` WASM ([vendor/binjgb/](vendor/binjgb/)):
   - `vendor/binjgb/binjgb.js` (`13,029` bytes)
   - `vendor/binjgb/binjgb.wasm` (`88,652` bytes)
@@ -16,6 +16,7 @@
 - **Helper scripts:**
   - [serve.sh](serve.sh) — serves repo root on `http://127.0.0.1:${1:-8000}/` via `python3 -m http.server`.
   - [open-chrome.sh](open-chrome.sh) — launches `google-chrome` with `--remote-debugging-port=${2:-9222}` and persistent profile `${XDG_CACHE_HOME:-$HOME/.cache}/retro-idle-chrome`.
+- **GitHub Pages deployment:** Empty [.nojekyll](.nojekyll) at repo root serves static files directly from `main` (`/ (root)`) at `https://kssilveira.github.io/retro-idle/` without Jekyll processing. Keep asset paths in `index.html` relative (`./vendor/binjgb/...`) for subpath hosting; `IndexedDB` (`retro-idle`) and `localStorage` (`retro-idle:unload`) are already namespaced for the shared `kssilveira.github.io` origin, and `binjgb` requires no COOP/COEP headers.
 - **Roadmap:** See [docs/stage-1-plan.md](docs/stage-1-plan.md).
 
 ---
@@ -61,6 +62,6 @@
 ---
 
 ## 6. Next Steps (per `docs/stage-1-plan.md`)
-- Bootstrap a package manager (`npm`/`pnpm`) when ready to migrate to Vite + TypeScript.
+- Bootstrap a package manager (`npm`/`pnpm`) when ready to migrate to Vite + TypeScript; when adding a build step, set `base: '/retro-idle/'` in `vite.config.ts` and switch GitHub Pages to a GitHub Actions workflow deploying `dist/`.
 - **M2 — ROM Profile & Live WRAM HUD:** Add `pokered` CRC32 identification + live WRAM polling via `emu.readMem(addr)` (note big-endian Gen 1 HP values, `wBattleMon*` vs `wPartyMon1*`, `& 0x3F` PP bitmask, and internal species ID → National Dex mapping).
 - **M3–M5 — Auto-Grind FSM, Undo Ring Buffer, Background Worker & Alerts:** Extract `BinjgbEmulator` into `EmulatorCore` (`src/core/emulator.ts`) inside a Web Worker for throttled background tabs (`1x`–`20x`), implement pure TS `AutoGrindFSM`, rolling save-state ring buffer, and PiP/notifications.
