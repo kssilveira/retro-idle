@@ -294,7 +294,65 @@
       }
     }
 
-    async function loadRom(romSource, fileName) {
+    const ROM_DB_NAME = 'retro-idle';
+    const ROM_STORE_NAME = 'kv';
+    const LAST_ROM_KEY = 'lastRom';
+
+    function openRomDb() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(ROM_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(ROM_STORE_NAME)) {
+            req.result.createObjectStore(ROM_STORE_NAME);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function saveLastRom(blob, name) {
+      let db;
+      try {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        db = await openRomDb();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(ROM_STORE_NAME, 'readwrite');
+          tx.objectStore(ROM_STORE_NAME).put({ bytes, name, savedAt: Date.now() }, LAST_ROM_KEY);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      } catch (err) {
+        console.warn('Could not persist last ROM:', err);
+      } finally {
+        db?.close();
+      }
+    }
+
+    async function loadLastRom() {
+      let db;
+      try {
+        db = await openRomDb();
+        const record = await new Promise((resolve, reject) => {
+          const tx = db.transaction(ROM_STORE_NAME, 'readonly');
+          const req = tx.objectStore(ROM_STORE_NAME).get(LAST_ROM_KEY);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+        });
+        if (!record?.bytes || !record?.name) {
+          return null;
+        }
+        return new File([record.bytes], record.name);
+      } catch (err) {
+        console.warn('Could not load saved ROM:', err);
+        return null;
+      } finally {
+        db?.close();
+      }
+    }
+
+    async function loadRom(romSource, fileName, { persist = false } = {}) {
       if (!romSource || isBusy) return;
       const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
       let loadStatusSuffix = '';
@@ -316,6 +374,9 @@
         );
 
         await WasmBoy.loadROM(romSource);
+        if (persist && romSource instanceof Blob) {
+          await saveLastRom(romSource, label);
+        }
         const restoredAutoSave = await restoreLatestAutoSave();
         hasManualSave = Boolean(await getLatestSaveState(false).catch(() => null));
         await WasmBoy.play();
@@ -342,7 +403,7 @@
       const file = romInput.files && romInput.files[0];
       romInput.value = '';
       if (file) {
-        await loadRom(file, file.name);
+        await loadRom(file, file.name, { persist: true });
       } else {
         blurActiveElement();
       }
@@ -430,7 +491,7 @@
       document.body.classList.remove('dragging');
       const file = e.dataTransfer?.files?.[0];
       if (file) {
-        await loadRom(file, file.name);
+        await loadRom(file, file.name, { persist: true });
       }
     });
 
@@ -441,6 +502,12 @@
     const romUrl = params.get('rom');
     if (romUrl) {
       loadRom(romUrl, romUrl.split('/').pop());
+    } else {
+      loadLastRom().then((savedFile) => {
+        if (savedFile && !hasLoadedRom) {
+          loadRom(savedFile, savedFile.name);
+        }
+      });
     }
 
     window.__retroIdle = { WasmBoy, loadRom };
