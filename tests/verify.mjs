@@ -555,6 +555,95 @@ async function main() {
 
     await waitFor(async () => await client.eval(HAS_NON_BLANK_CANVAS_EXPR), 5000, 30);
 
+    // Speed controls check: initial 1x, 4x button throughput, reset persistence, and 1-5 hotkeys
+    const initialSpeedInfo = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      emuSpeed: window.__retroIdle.getEmulator().speed,
+      btn1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+      btn1Pressed: document.querySelector('.speed-btn[data-speed="1"]').getAttribute('aria-pressed'),
+    })`);
+    assert.equal(initialSpeedInfo.speed, 1, 'Expected initial speed 1');
+    assert.equal(initialSpeedInfo.emuSpeed, 1, 'Expected initial emulator speed 1');
+    assert.equal(initialSpeedInfo.btn1Active, true, 'Expected 1x button active initially');
+    assert.equal(initialSpeedInfo.btn1Pressed, 'true', 'Expected 1x button aria-pressed="true" initially');
+
+    const t1Start = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    await sleep(350);
+    const t1End = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    const ticks1x = t1End - t1Start;
+    assert.ok(ticks1x > 0, `Expected positive ticks at 1x, got ${ticks1x}`);
+
+    await client.eval(`document.querySelector('.speed-btn[data-speed="4"]').click()`);
+    const speed4Info = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      emuSpeed: window.__retroIdle.getEmulator().speed,
+      btn1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+      btn4Active: document.querySelector('.speed-btn[data-speed="4"]').classList.contains('active'),
+      btn4Pressed: document.querySelector('.speed-btn[data-speed="4"]').getAttribute('aria-pressed'),
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(speed4Info.speed, 4, 'Expected speed 4 after clicking 4x');
+    assert.equal(speed4Info.emuSpeed, 4, 'Expected emulator speed 4 after clicking 4x');
+    assert.equal(speed4Info.btn1Active, false, 'Expected 1x button inactive at 4x');
+    assert.equal(speed4Info.btn4Active, true, 'Expected 4x button active at 4x');
+    assert.equal(speed4Info.btn4Pressed, 'true', 'Expected 4x button aria-pressed="true"');
+    assert.notEqual(speed4Info.activeTag, 'BUTTON', 'Speed button must blur after click');
+
+    const t4Start = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    await sleep(350);
+    const t4End = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    const ticks4x = t4End - t4Start;
+    assert.ok(
+      ticks4x > ticks1x * 2.2,
+      `Expected 4x ticks (${ticks4x}) > 2.2x of 1x ticks (${ticks1x})`
+    );
+
+    // Speed persists across Reset
+    await client.eval(`document.getElementById('reset-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getEmulator().isPlaying === true && !document.getElementById('reset-btn').disabled`
+        ),
+      8000,
+      40
+    );
+    const speedAfterReset = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      emuSpeed: window.__retroIdle.getEmulator().speed,
+    })`);
+    assert.equal(speedAfterReset.speed, 4, 'Speed should persist at 4 after Reset');
+    assert.equal(speedAfterReset.emuSpeed, 4, 'Emulator speed should persist at 4 after Reset');
+
+    // Hotkey Digit4 -> 10x, Digit1 -> 1x
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: '4',
+      code: 'Digit4',
+      windowsVirtualKeyCode: 52,
+      nativeVirtualKeyCode: 52,
+    });
+    const speed10Info = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      btn10Active: document.querySelector('.speed-btn[data-speed="10"]').classList.contains('active'),
+    })`);
+    assert.equal(speed10Info.speed, 10, 'Expected Digit4 hotkey to switch speed to 10x');
+    assert.equal(speed10Info.btn10Active, true, 'Expected 10x button active after Digit4');
+
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: '1',
+      code: 'Digit1',
+      windowsVirtualKeyCode: 49,
+      nativeVirtualKeyCode: 49,
+    });
+    const speed1Info = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      btn1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+    })`);
+    assert.equal(speed1Info.speed, 1, 'Expected Digit1 hotkey to switch speed back to 1x');
+    assert.equal(speed1Info.btn1Active, true, 'Expected 1x button active after Digit1');
+
     // Capture screenshot
     const shot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
@@ -585,6 +674,7 @@ async function main() {
       scxAfterPostReloadManualLoad,
       resumedStatus,
       resetStatus,
+      speedCheck: { ticks1x, ticks4x, ratio: Number((ticks4x / ticks1x).toFixed(2)) },
       screenshot: SCREENSHOT_PATH,
     });
   } finally {

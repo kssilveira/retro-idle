@@ -103,6 +103,27 @@
       background: #0c4a6e;
     }
 
+    .speed-controls {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .speed-label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-right: 2px;
+    }
+
+    .speed-btn {
+      font-size: 0.825rem;
+      padding: 5px 10px;
+      min-width: 44px;
+    }
+
     #rom-input,
     #sav-input {
       position: absolute;
@@ -164,6 +185,15 @@
       <button type="button" id="auto-fight-btn" disabled title="Pokémon Red/Blue only">Auto-Fight</button>
     </div>
 
+    <div class="speed-controls" id="speed-controls" role="group" aria-label="Emulator speed">
+      <span class="speed-label">Speed</span>
+      <button type="button" class="speed-btn active" data-speed="1" aria-pressed="true">1x</button>
+      <button type="button" class="speed-btn" data-speed="2" aria-pressed="false" title="Audio muted above 1x">2x</button>
+      <button type="button" class="speed-btn" data-speed="4" aria-pressed="false" title="Audio muted above 1x">4x</button>
+      <button type="button" class="speed-btn" data-speed="10" aria-pressed="false" title="Audio muted above 1x">10x</button>
+      <button type="button" class="speed-btn" data-speed="20" aria-pressed="false" title="Audio muted above 1x">20x</button>
+    </div>
+
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
     <div id="auto-fight-status" hidden></div>
 
@@ -173,6 +203,7 @@
       B: <kbd>Z</kbd> &middot;
       Start: <kbd>Enter</kbd> &middot;
       Select: <kbd>Shift</kbd> &middot;
+      Speed: <kbd>1</kbd>&ndash;<kbd>5</kbd> &middot;
       Gamepad supported
     </p>
   </main>
@@ -186,7 +217,21 @@
     const AUDIO_FRAMES = 4096;
     const AUDIO_LATENCY_SEC = 0.1;
     const MAX_UPDATE_SEC = 5 / 60;
+    const MAX_TURBO_STEP_MS = 12;
     const CPU_TICKS_PER_SECOND = 4194304;
+    const SPEED_OPTIONS = [1, 2, 4, 10, 20];
+    const SPEED_KEY_MAP = {
+      Digit1: 1,
+      Numpad1: 1,
+      Digit2: 2,
+      Numpad2: 2,
+      Digit3: 4,
+      Numpad3: 4,
+      Digit4: 10,
+      Numpad4: 10,
+      Digit5: 20,
+      Numpad5: 20,
+    };
     const EVENT_NEW_FRAME = 1;
     const EVENT_AUDIO_BUFFER_FULL = 2;
     const EVENT_UNTIL_TICKS = 4;
@@ -246,11 +291,14 @@
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
     const autoFightStatusEl = document.getElementById('auto-fight-status');
+    const speedButtons = Array.from(document.querySelectorAll('.speed-btn'));
     const statusEl = document.getElementById('status');
 
     let binjgb;
     let audioCtx = null;
+    let audioGain = null;
     let emu = null;
+    let currentSpeed = 1;
     let currentRomBytes = null;
     let currentRomId = '';
     let currentRomTitle = '';
@@ -266,9 +314,20 @@
     function getAudioContext() {
       if (!audioCtx) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
-        if (Ctor) audioCtx = new Ctor();
+        if (Ctor) {
+          audioCtx = new Ctor();
+          audioGain = audioCtx.createGain();
+          audioGain.gain.value = currentSpeed === 1 ? 1 : 0;
+          audioGain.connect(audioCtx.destination);
+        }
       }
       return audioCtx;
+    }
+
+    function syncAudioGain() {
+      if (audioCtx && audioGain) {
+        audioGain.gain.setValueAtTime(currentSpeed === 1 ? 1 : 0, audioCtx.currentTime);
+      }
     }
 
     function resumeAudioSafely() {
@@ -361,10 +420,12 @@
     const dbDelete = (key) => withDb('readwrite', (s) => s.delete(key));
 
     class BinjgbEmulator {
-      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated, onFrame } = {}) {
+      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated, onFrame, speed = 1 } = {}) {
         this.module = module;
         this.onExtRamUpdated = onExtRamUpdated;
         this.onFrame = onFrame;
+        const parsedSpeed = Number(speed);
+        this.speed = Number.isFinite(parsedSpeed) && parsedSpeed > 0 ? parsedSpeed : 1;
         this.overrideButtons = null;
         this.ctx = canvasEl.getContext('2d');
         this.imageData = this.ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -446,8 +507,22 @@
           if (!stateBytes || buf.byteLength !== stateBytes.byteLength) return false;
           buf.set(stateBytes);
           this.module._emulator_read_state(this.e, ptr);
+          this.leftoverTicks = 0;
+          this.audioStartSec = 0;
           return true;
         });
+      }
+
+      getTicks() {
+        return this.destroyed || !this.e ? 0 : this.module._emulator_get_ticks_f64(this.e);
+      }
+
+      setSpeed(speed) {
+        const next = Number(speed);
+        if (!Number.isFinite(next) || next <= 0 || next === this.speed) return;
+        this.speed = next;
+        this.leftoverTicks = 0;
+        this.audioStartSec = 0;
       }
 
       getExtRam() {
@@ -520,6 +595,7 @@
       }
 
       pushAudio() {
+        if (this.speed !== 1) return;
         const ctx = getAudioContext();
         if (!ctx || ctx.state !== 'running') return;
         const ptr = this.module._get_audio_buffer_ptr(this.e);
@@ -538,7 +614,7 @@
           }
           const src = ctx.createBufferSource();
           src.buffer = buffer;
-          src.connect(ctx.destination);
+          src.connect(audioGain || ctx.destination);
           src.start(this.audioStartSec);
           this.audioStartSec += AUDIO_FRAMES / ctx.sampleRate;
         } else {
@@ -546,12 +622,20 @@
         }
       }
 
-      renderFrame() {
+      captureFrame() {
         const ptr = this.module._get_frame_buffer_ptr(this.e);
         const size = this.module._get_frame_buffer_size(this.e);
         const fb = new Uint8Array(this.module.HEAP8.buffer, ptr, size);
         this.imageData.data.set(fb);
+      }
+
+      presentFrame() {
         this.ctx.putImageData(this.imageData, 0, 0);
+      }
+
+      renderFrame() {
+        this.captureFrame();
+        this.presentFrame();
       }
 
       stepFrame = (ms) => {
@@ -564,19 +648,33 @@
         this.lastSec = sec;
 
         const startTicks = this.module._emulator_get_ticks_f64(this.e);
-        const deltaTicks = Math.min(deltaSec, MAX_UPDATE_SEC) * CPU_TICKS_PER_SECOND;
+        const deltaTicks = Math.min(deltaSec, MAX_UPDATE_SEC) * CPU_TICKS_PER_SECOND * this.speed;
         const untilTicks = startTicks + deltaTicks - this.leftoverTicks;
+        const deadlineMs = this.speed > 1 ? performance.now() + MAX_TURBO_STEP_MS : Infinity;
+        let hasNewFrame = false;
+        let budgetExceeded = false;
 
         while (true) {
           const ev = this.module._emulator_run_until_f64(this.e, untilTicks);
           if (ev & EVENT_NEW_FRAME) {
-            this.renderFrame();
+            this.captureFrame();
+            hasNewFrame = true;
             this.onFrame?.();
+            if (this.destroyed || this.rafId === 0) break;
           }
           if (ev & EVENT_AUDIO_BUFFER_FULL) this.pushAudio();
           if ((ev & EVENT_UNTIL_TICKS) || ev === 0) break;
+          if (performance.now() >= deadlineMs) {
+            budgetExceeded = true;
+            break;
+          }
         }
-        this.leftoverTicks = (this.module._emulator_get_ticks_f64(this.e) - untilTicks) | 0;
+        if (this.destroyed) return;
+        if (hasNewFrame) this.presentFrame();
+        this.leftoverTicks =
+          budgetExceeded || this.rafId === 0
+            ? 0
+            : (this.module._emulator_get_ticks_f64(this.e) - untilTicks) | 0;
 
         if (this.module._emulator_was_ext_ram_updated(this.e)) {
           this.onExtRamUpdated?.();
@@ -626,6 +724,19 @@
       lastAutoFightText = text;
       autoFightStatusEl.textContent = text;
       autoFightStatusEl.hidden = !text;
+    }
+
+    function setSpeed(speed) {
+      const next = Number(speed);
+      if (!SPEED_OPTIONS.includes(next)) return;
+      currentSpeed = next;
+      emu?.setSpeed(currentSpeed);
+      syncAudioGain();
+      for (const btn of speedButtons) {
+        const active = Number(btn.dataset.speed) === currentSpeed;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
     }
 
     function syncAutoFightButton() {
@@ -807,6 +918,7 @@
         emu = new BinjgbEmulator(binjgb, romBytes, sram, canvas, {
           onExtRamUpdated: scheduleSramFlush,
           onFrame: stepAutoFight,
+          speed: currentSpeed,
         });
 
         if (autoState && emu.loadState(autoState)) {
@@ -887,6 +999,7 @@
       emu = new BinjgbEmulator(binjgb, currentRomBytes, sramBytes, canvas, {
         onExtRamUpdated: scheduleSramFlush,
         onFrame: stepAutoFight,
+        speed: currentSpeed,
       });
       emu.resume();
     }
@@ -918,6 +1031,14 @@
         return ' — state loaded';
       })
     );
+
+    for (const btn of speedButtons) {
+      btn.addEventListener('click', () => {
+        resumeAudioSafely();
+        setSpeed(Number(btn.dataset.speed));
+        blurActiveElement();
+      });
+    }
 
     autoFightBtn.addEventListener('click', () => {
       if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
@@ -979,6 +1100,18 @@
       resumeAudioSafely();
       if (e.code === 'Escape' && autoFight.getState().active) {
         stopAutoFight('manual');
+        e.preventDefault();
+        return;
+      }
+      const speedChoice = SPEED_KEY_MAP[e.code];
+      if (
+        speedChoice &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !(document.activeElement && INPUT_TAGS.has(document.activeElement.tagName))
+      ) {
+        setSpeed(speedChoice);
         e.preventDefault();
         return;
       }
@@ -1056,6 +1189,8 @@
     window.__retroIdle = {
       getEmulator: () => emu,
       loadRom,
+      getSpeed: () => currentSpeed,
+      setSpeed,
       getAutoFight: () => ({
         ...autoFight.getState(),
         start: startAutoFight,

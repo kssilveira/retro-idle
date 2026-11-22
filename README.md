@@ -9,6 +9,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **Zero-build browser GB/GBC emulator** ([index.html](index.html)) powered by vendored MIT-licensed `binjgb` WASM.
 - **ROM loading & auto-resume:** Load `.gb` / `.gbc` files via file picker, full-page drag-and-drop, or `?rom=<url>`. Your last ROM, auto-save state, and battery SRAM persist locally in `IndexedDB`.
 - **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators.
+- **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
 - **Pokémon Red / Blue Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED` or `POKEMON BLUE` ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl).
@@ -21,6 +22,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 | D-Pad | `Arrow Keys` or `WASD` |
 | A / B | `X` / `Z` |
 | Start / Select | `Enter` / `Shift` or `Tab` |
+| Speed (1x–20x) | `1`–`5` |
 | Stop Auto-Fight | `Escape` |
 | Gamepad | Standard Gamepad API mapping |
 
