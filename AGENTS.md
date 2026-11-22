@@ -26,12 +26,11 @@
   - [open-chrome.sh](open-chrome.sh) — launches `google-chrome` with `--remote-debugging-port=${2:-9222}` and persistent profile `${XDG_CACHE_HOME:-$HOME/.cache}/retro-idle-chrome`.
   - [scripts/generate-demo-gif.mjs](scripts/generate-demo-gif.mjs) — generates [docs/autofight-demo.gif](docs/autofight-demo.gif) using the real UI shell and `autofight.js` state machine with 100% original placeholder pixel art (zero commercial ROM assets).
 - **GitHub Pages deployment:** Empty [.nojekyll](.nojekyll) at repo root serves static files directly from `main` (`/ (root)`) at `https://kssilveira.github.io/retro-idle/` without Jekyll processing. Keep module/asset paths in `index.html` relative (`./autofight.js`, `./vendor/binjgb/...`) for subpath hosting; `IndexedDB` (`retro-idle`) and `localStorage` (`retro-idle:unload`) are already namespaced for the shared `kssilveira.github.io` origin, and `binjgb` requires no COOP/COEP headers.
-- **Roadmap:** See [docs/stage-1-plan.md](docs/stage-1-plan.md).
 
 ---
 
 ## 2. Core Choice: Why `binjgb` Replaced `wasmboy`
-[docs/stage-1-plan.md](docs/stage-1-plan.md#L64-L65) originally listed `wasmboy` first and `binjgb` as the fallback. We switched to **`binjgb`** after verifying upstream bugs in `wasmboy@0.7.1` (still present on `wasmboy` `master`):
+We originally considered `wasmboy` first with `binjgb` as the fallback, then switched to **`binjgb`** after verifying upstream bugs in `wasmboy@0.7.1` (still present on `wasmboy` `master`):
 1. **5 copy-paste `loadState()` slot bugs in `wasmboy` WASM** (`Channel1.cycleCounter`, `Channel2.cycleCounter`, `Graphics.scanlineRegister`, `Channel3.cycleCounter`, `Channel4.cycleCounter` passed as the slot index to `getSaveStateMemoryOffset(offset, slot)` instead of `saveStateSlot`). The 1st load state corrupts fields with unintended memory; the 2nd load state traps with `RuntimeError: memory access out of bounds` and drops worker messages.
 2. **`WasmBoyMemory.loadState()` raw `ArrayBuffer` bug** leaving `cartridgeRam`/`gameboyMemory`/`paletteMemory`/`internalState` unwrapped until the next frame.
 3. **`binjgb` advantages:** Flat single-buffer state (`_emulator_write_state` / `_emulator_read_state`) and SRAM (`_emulator_write_ext_ram` / `_emulator_read_ext_ram`), built-in dirty SRAM flag (`_emulator_was_ext_ram_updated`), direct `_emulator_read_mem(e, addr)`, and zero runtime binary patching.
@@ -77,7 +76,7 @@
 
 ---
 
-## 6. Next Steps (per `docs/stage-1-plan.md`)
+## 6. Next Steps
 - Basic Pokémon Red/Blue WRAM reading, `1x`–`20x` speed controls, and Auto-Fight with automatic Heal Center heal-and-return (tethered pacing, wild battle attacking, passive breadcrumb tracking, healer round-trip healing, and safety/error stops) are now implemented in [index.html](index.html) and [autofight.js](autofight.js).
 - Bootstrap a package manager (`npm`/`pnpm`) when ready to migrate to Vite + TypeScript; when adding a build step, set `base: '/retro-idle/'` in `vite.config.ts` and switch GitHub Pages to a GitHub Actions workflow deploying `dist/`.
 - **M2/M3 polish — Live WRAM Telemetry HUD & Configurable Stops:** Surface lead level, HP/MaxHP, PP, species, and configurable stop conditions (target level, min HP%, uncaught/target species via internal-ID → National Dex mapping) plus generic macro fallback for non-Pokémon ROMs.

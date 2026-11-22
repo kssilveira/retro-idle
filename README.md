@@ -50,7 +50,6 @@ node --test tests/autofight.test.mjs
 node tests/verify.mjs
 ```
 
-## Roadmap & Copyright Notice
+## Copyright Notice
 
-- See [docs/stage-1-plan.md](docs/stage-1-plan.md) for the Stage 1 roadmap (live telemetry HUD, configurable stop rules, background Web Worker turbo mode, Undo ring buffer, and alerts).
 - **No copyrighted ROMs, BIOS dumps, or game assets are included.** Bring your own legally obtained `.gb` / `.gbc` ROMs; everything runs 100% client-side in your browser.
