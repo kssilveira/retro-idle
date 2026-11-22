@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1120" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="retro-idle" />
   <title>retro-idle — Game Boy Emulator</title>
   <link rel="icon" href="data:," />
   <style>
@@ -20,16 +25,33 @@
       box-sizing: border-box;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
+    html,
+    body {
+      overscroll-behavior: none;
+    }
+
     body {
       margin: 0;
-      min-height: 100vh;
+      min-height: 100dvh;
       display: grid;
       place-items: center;
       padding: 20px;
       background: var(--bg);
       color: var(--text);
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      touch-action: manipulation;
       transition: outline-color 120ms ease;
+    }
+
+    button,
+    .file-label,
+    .touch-gamepad,
+    .touch-gamepad * {
+      -webkit-tap-highlight-color: transparent;
     }
 
     body.dragging {
@@ -213,6 +235,350 @@
       font-size: 0.75rem;
       color: var(--text);
     }
+
+    .touch-gamepad {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "dpad ab"
+        "meta meta";
+      align-items: center;
+      justify-items: center;
+      row-gap: 14px;
+      column-gap: 12px;
+      width: 100%;
+      padding: 6px 4px 2px;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    .pad-left {
+      grid-area: dpad;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pad-right {
+      grid-area: ab;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pad-center {
+      grid-area: meta;
+      display: flex;
+      gap: 18px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .dpad {
+      --dpad-size: 138px;
+      --dpad-arm: 46px;
+      position: relative;
+      width: var(--dpad-size);
+      height: var(--dpad-size);
+      touch-action: none;
+    }
+
+    .dpad-arm {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1;
+      pointer-events: none;
+      transition: background-color 60ms ease, border-color 60ms ease, color 60ms ease;
+    }
+
+    .dpad-up {
+      top: 0;
+      left: var(--dpad-arm);
+      width: var(--dpad-arm);
+      height: calc(var(--dpad-arm) + 2px);
+      border-radius: 8px 8px 0 0;
+    }
+
+    .dpad-down {
+      bottom: 0;
+      left: var(--dpad-arm);
+      width: var(--dpad-arm);
+      height: calc(var(--dpad-arm) + 2px);
+      border-radius: 0 0 8px 8px;
+    }
+
+    .dpad-left {
+      left: 0;
+      top: var(--dpad-arm);
+      width: calc(var(--dpad-arm) + 2px);
+      height: var(--dpad-arm);
+      border-radius: 8px 0 0 8px;
+    }
+
+    .dpad-right {
+      right: 0;
+      top: var(--dpad-arm);
+      width: calc(var(--dpad-arm) + 2px);
+      height: var(--dpad-arm);
+      border-radius: 0 8px 8px 0;
+    }
+
+    .dpad-center {
+      position: absolute;
+      top: var(--dpad-arm);
+      left: var(--dpad-arm);
+      width: var(--dpad-arm);
+      height: var(--dpad-arm);
+      background: #1e293b;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+    }
+
+    .dpad-center::after {
+      content: '';
+      width: 48%;
+      height: 48%;
+      border-radius: 50%;
+      background: #0f172a;
+      border: 1px solid #334155;
+    }
+
+    .dpad-arm.pressed {
+      background: #0c4a6e;
+      border-color: var(--accent);
+      color: #f8fafc;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+    }
+
+    .ab-cluster {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .gb-action-btn {
+      width: 60px;
+      height: 60px;
+      padding: 0;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 1.05rem;
+      touch-action: none;
+      background: #7f1d1d;
+      border: 2px solid #b91c1c;
+      color: #fecaca;
+      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35);
+      transition: transform 60ms ease, background-color 60ms ease, border-color 60ms ease;
+    }
+
+    .gb-action-btn:not(:disabled):hover {
+      border-color: #ef4444;
+    }
+
+    .gb-btn-b {
+      margin-top: 24px;
+    }
+
+    .gb-btn-a {
+      margin-bottom: 24px;
+    }
+
+    .gb-action-btn.pressed {
+      background: #dc2626;
+      border-color: #fca5a5;
+      color: #ffffff;
+      transform: scale(0.95);
+    }
+
+    .gb-meta-btn {
+      min-width: 72px;
+      min-height: 32px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      touch-action: none;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--muted);
+      transition: transform 60ms ease, background-color 60ms ease, border-color 60ms ease, color 60ms ease;
+    }
+
+    .gb-meta-btn.pressed {
+      background: #0c4a6e;
+      border-color: var(--accent);
+      color: #f8fafc;
+      transform: scale(0.95);
+    }
+
+    @media (pointer: coarse) {
+      .legend {
+        display: none;
+      }
+    }
+
+    @media (max-width: 768px), (pointer: coarse) {
+      body {
+        padding:
+          max(8px, env(safe-area-inset-top))
+          max(10px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(10px, env(safe-area-inset-left));
+        align-content: start;
+      }
+
+      main {
+        width: 100%;
+        padding: 12px;
+        gap: 10px;
+        border-radius: 10px;
+      }
+
+      h1 {
+        order: 1;
+        font-size: 0.95rem;
+      }
+
+      .screen-slot {
+        order: 2;
+        width: min(100%, calc((100dvh - 370px) * 160 / 144));
+        min-width: min(100%, 240px);
+      }
+
+      #status {
+        order: 3;
+        font-size: 0.8rem;
+      }
+
+      #auto-fight-status {
+        order: 4;
+        font-size: 0.78rem;
+      }
+
+      #heal-center-status {
+        order: 5;
+        font-size: 0.76rem;
+      }
+
+      .touch-gamepad {
+        order: 6;
+      }
+
+      .speed-controls {
+        order: 7;
+      }
+
+      .controls {
+        order: 8;
+        gap: 6px;
+      }
+
+      .legend {
+        order: 9;
+      }
+
+      .controls button,
+      .controls .file-label {
+        padding: 7px 11px;
+        font-size: 0.82rem;
+      }
+
+      .speed-btn {
+        padding: 5px 9px;
+        min-width: 40px;
+      }
+    }
+
+    @media (orientation: landscape) and (max-height: 540px) {
+      body.touch-controls-visible {
+        padding:
+          max(4px, env(safe-area-inset-top))
+          max(8px, env(safe-area-inset-right))
+          max(6px, env(safe-area-inset-bottom))
+          max(8px, env(safe-area-inset-left));
+        align-content: start;
+      }
+
+      body.touch-controls-visible main {
+        width: 100%;
+        max-width: 100%;
+        padding: 4px 6px;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        display: grid;
+        grid-template-columns: minmax(140px, 1fr) auto minmax(140px, 1fr);
+        align-items: center;
+        justify-items: center;
+        column-gap: 10px;
+        row-gap: 6px;
+      }
+
+      body.touch-controls-visible main > h1,
+      body.touch-controls-visible main > .legend {
+        display: none;
+      }
+
+      body.touch-controls-visible .screen-slot {
+        grid-column: 2;
+        grid-row: 1;
+        order: initial;
+        width: min(calc(100vw - 310px), calc((100dvh - 58px) * 160 / 144), 380px);
+        min-width: 0;
+        height: auto;
+        aspect-ratio: 160 / 144;
+      }
+
+      body.touch-controls-visible .touch-gamepad {
+        display: contents;
+      }
+
+      body.touch-controls-visible .pad-left {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      body.touch-controls-visible .pad-right {
+        grid-column: 3;
+        grid-row: 1;
+      }
+
+      body.touch-controls-visible .pad-center {
+        grid-column: 2;
+        grid-row: 2;
+        gap: 14px;
+      }
+
+      body.touch-controls-visible #status,
+      body.touch-controls-visible #auto-fight-status,
+      body.touch-controls-visible #heal-center-status,
+      body.touch-controls-visible .speed-controls,
+      body.touch-controls-visible .controls {
+        grid-column: 1 / -1;
+        order: initial;
+      }
+    }
+
+    @media (orientation: landscape) and (max-height: 400px) {
+      body.touch-controls-visible .dpad {
+        --dpad-size: 126px;
+        --dpad-arm: 42px;
+      }
+
+      body.touch-controls-visible .gb-action-btn {
+        width: 56px;
+        height: 56px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -237,6 +603,7 @@
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
       <button type="button" id="auto-fight-btn" disabled title="Pokémon Red / Blue / Yellow">Auto-Fight</button>
+      <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen Game Boy controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
 
@@ -252,6 +619,28 @@
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
     <div id="auto-fight-status" hidden></div>
     <div id="heal-center-status" hidden></div>
+
+    <section id="touch-gamepad" class="touch-gamepad" aria-label="Game Boy controls" hidden>
+      <div class="pad-left">
+        <div id="touch-dpad" class="dpad" role="group" aria-label="D-Pad">
+          <div class="dpad-arm dpad-up" data-gb-btn="up" aria-hidden="true">&#9650;</div>
+          <div class="dpad-arm dpad-down" data-gb-btn="down" aria-hidden="true">&#9660;</div>
+          <div class="dpad-arm dpad-left" data-gb-btn="left" aria-hidden="true">&#9664;</div>
+          <div class="dpad-arm dpad-right" data-gb-btn="right" aria-hidden="true">&#9654;</div>
+          <div class="dpad-center" aria-hidden="true"></div>
+        </div>
+      </div>
+      <div class="pad-right">
+        <div class="ab-cluster">
+          <button type="button" class="gb-action-btn gb-btn-b" data-gb-btn="b" aria-label="B button">B</button>
+          <button type="button" class="gb-action-btn gb-btn-a" data-gb-btn="a" aria-label="A button">A</button>
+        </div>
+      </div>
+      <div class="pad-center">
+        <button type="button" class="gb-meta-btn" data-gb-btn="select">SELECT</button>
+        <button type="button" class="gb-meta-btn" data-gb-btn="start">START</button>
+      </div>
+    </section>
 
     <p class="legend">
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
@@ -339,6 +728,9 @@
 
     const INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'BUTTON']);
     const SUPPORTS_DOCUMENT_PIP = 'documentPictureInPicture' in window;
+    const IS_MOBILE_OS =
+      /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
     const screenSlotEl = document.getElementById('screen-slot');
     const canvas = document.getElementById('screen');
@@ -353,11 +745,26 @@
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
+    const touchPadBtn = document.getElementById('touch-pad-btn');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
+    const touchGamepadEl = document.getElementById('touch-gamepad');
+    const touchDpadEl = document.getElementById('touch-dpad');
+    const touchButtonElsByName = new Map();
+    for (const el of touchGamepadEl.querySelectorAll('[data-gb-btn]')) {
+      const btn = el.dataset.gbBtn;
+      if (!touchButtonElsByName.has(btn)) touchButtonElsByName.set(btn, []);
+      touchButtonElsByName.get(btn).push(el);
+    }
+    const touchDiscreteButtons = Array.from(touchGamepadEl.querySelectorAll('button[data-gb-btn]'));
     const autoFightStatusEl = document.getElementById('auto-fight-status');
     const healCenterStatusEl = document.getElementById('heal-center-status');
     const speedButtons = Array.from(document.querySelectorAll('.speed-btn'));
     const statusEl = document.getElementById('status');
+
+    if (IS_MOBILE_OS) {
+      romInput.removeAttribute('accept');
+      savInput.removeAttribute('accept');
+    }
 
     let binjgb;
     let audioCtx = null;
@@ -383,6 +790,31 @@
     let lastHealCenterText = '';
     let lastHealCenterLinked = false;
     const heldKeys = new Set();
+    const activeTouchPointers = new Map();
+    const heldTouchButtons = new Set();
+    const mobileLayoutQuery = window.matchMedia('(pointer: coarse), (max-width: 768px)');
+    let touchControlsOverride = null;
+    let wakeLockSentinel = null;
+
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator) || wakeLockSentinel || document.visibilityState !== 'visible') {
+        return;
+      }
+      try {
+        wakeLockSentinel = await navigator.wakeLock.request('screen');
+        wakeLockSentinel.addEventListener('release', () => {
+          wakeLockSentinel = null;
+        });
+      } catch {}
+    }
+
+    function releaseWakeLock() {
+      const sentinel = wakeLockSentinel;
+      wakeLockSentinel = null;
+      if (sentinel) {
+        sentinel.release().catch(() => {});
+      }
+    }
 
     function isMiniPlayerOpen() {
       return Boolean(pipWindow && !pipWindow.closed);
@@ -665,14 +1097,14 @@
           next = { ...this.overrideButtons };
         } else {
           next = {
-            up: heldKeys.has('up'),
-            down: heldKeys.has('down'),
-            left: heldKeys.has('left'),
-            right: heldKeys.has('right'),
-            a: heldKeys.has('a'),
-            b: heldKeys.has('b'),
-            start: heldKeys.has('start'),
-            select: heldKeys.has('select'),
+            up: heldKeys.has('up') || heldTouchButtons.has('up'),
+            down: heldKeys.has('down') || heldTouchButtons.has('down'),
+            left: heldKeys.has('left') || heldTouchButtons.has('left'),
+            right: heldKeys.has('right') || heldTouchButtons.has('right'),
+            a: heldKeys.has('a') || heldTouchButtons.has('a'),
+            b: heldKeys.has('b') || heldTouchButtons.has('b'),
+            start: heldKeys.has('start') || heldTouchButtons.has('start'),
+            select: heldKeys.has('select') || heldTouchButtons.has('select'),
           };
 
           const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -801,6 +1233,7 @@
         this.lastSec = 0;
         this.audioStartSec = 0;
         resumeAudioSafely();
+        requestWakeLock();
         this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
       }
 
@@ -819,6 +1252,7 @@
         if (audioCtx && audioCtx.state === 'running') {
           audioCtx.suspend().catch(() => {});
         }
+        releaseWakeLock();
       }
 
       destroy() {
@@ -903,6 +1337,7 @@
     }
 
     function syncMiniPlayerButton() {
+      miniPlayerBtn.hidden = !SUPPORTS_DOCUMENT_PIP;
       if (!SUPPORTS_DOCUMENT_PIP) {
         miniPlayerBtn.disabled = true;
         miniPlayerBtn.textContent = 'Mini-Player';
@@ -1433,6 +1868,7 @@
         }
 
         stopAutoFight();
+        clearTouchInput();
         await flushEmulatorPersistence();
         autoFight.clearTrail();
         await consumePendingUnload();
@@ -1532,6 +1968,7 @@
 
     async function rebootWithSram(sramBytes) {
       stopAutoFight();
+      clearTouchInput();
       autoFight.clearTrail();
       clearTimeout(sramFlushTimer);
       if (sramBytes) await dbPut(`sram:${currentRomId}`, sramBytes);
@@ -1686,15 +2123,153 @@
       heldKeys.delete(btn);
     }
 
+    function computeDpadDirs(dpadEl, clientX, clientY) {
+      const rect = dpadEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return [];
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      const radius = Math.min(rect.width, rect.height) / 2;
+      if (Math.hypot(dx, dy) < radius * 0.16) return [];
+      const dirs = [];
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax >= ay * 0.55) dirs.push(dx > 0 ? 'right' : 'left');
+      if (ay >= ax * 0.55) dirs.push(dy > 0 ? 'down' : 'up');
+      return dirs;
+    }
+
+    function syncTouchButtons({ vibrateOnNew = false } = {}) {
+      const next = new Set();
+      for (const btns of activeTouchPointers.values()) {
+        for (const b of btns) next.add(b);
+      }
+
+      let changed = next.size !== heldTouchButtons.size;
+      let hasNewPress = false;
+      for (const b of next) {
+        if (!heldTouchButtons.has(b)) {
+          changed = true;
+          hasNewPress = true;
+        }
+      }
+
+      heldTouchButtons.clear();
+      for (const b of next) heldTouchButtons.add(b);
+
+      for (const [btn, els] of touchButtonElsByName.entries()) {
+        const pressed = heldTouchButtons.has(btn);
+        for (const el of els) {
+          el.classList.toggle('pressed', pressed);
+        }
+      }
+
+      if (vibrateOnNew && hasNewPress && typeof navigator.vibrate === 'function') {
+        try {
+          navigator.vibrate(8);
+        } catch {}
+      }
+      if (changed) {
+        emu?.syncInput();
+      }
+    }
+
+    function clearTouchInput() {
+      if (activeTouchPointers.size === 0 && heldTouchButtons.size === 0) return;
+      activeTouchPointers.clear();
+      syncTouchButtons();
+    }
+
+    function isTouchControlsVisible() {
+      return touchControlsOverride !== null ? touchControlsOverride : mobileLayoutQuery.matches;
+    }
+
+    function syncTouchControlsVisibility() {
+      const visible = isTouchControlsVisible();
+      touchGamepadEl.hidden = !visible;
+      document.body.classList.toggle('touch-controls-visible', visible);
+      touchPadBtn.classList.toggle('active', visible);
+      touchPadBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      if (!visible) {
+        clearTouchInput();
+      }
+    }
+
+    touchPadBtn.addEventListener('click', () => {
+      resumeAudioSafely();
+      touchControlsOverride = !isTouchControlsVisible();
+      syncTouchControlsVisibility();
+      blurActiveElement();
+    });
+
+    if (typeof mobileLayoutQuery.addEventListener === 'function') {
+      mobileLayoutQuery.addEventListener('change', () => {
+        if (touchControlsOverride === null) {
+          syncTouchControlsVisibility();
+        }
+      });
+    }
+
+    touchGamepadEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    touchDpadEl.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      resumeAudioSafely();
+      try {
+        touchDpadEl.setPointerCapture(e.pointerId);
+      } catch {}
+      activeTouchPointers.set(e.pointerId, new Set(computeDpadDirs(touchDpadEl, e.clientX, e.clientY)));
+      syncTouchButtons({ vibrateOnNew: e.pointerType === 'touch' });
+    });
+
+    touchDpadEl.addEventListener('pointermove', (e) => {
+      if (!activeTouchPointers.has(e.pointerId)) return;
+      e.preventDefault();
+      activeTouchPointers.set(e.pointerId, new Set(computeDpadDirs(touchDpadEl, e.clientX, e.clientY)));
+      syncTouchButtons({ vibrateOnNew: e.pointerType === 'touch' });
+    });
+
+    for (const evName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      touchDpadEl.addEventListener(evName, (e) => {
+        if (activeTouchPointers.delete(e.pointerId)) {
+          syncTouchButtons();
+        }
+      });
+    }
+
+    for (const btnEl of touchDiscreteButtons) {
+      const btnName = btnEl.dataset.gbBtn;
+      btnEl.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        resumeAudioSafely();
+        try {
+          btnEl.setPointerCapture(e.pointerId);
+        } catch {}
+        activeTouchPointers.set(e.pointerId, new Set([btnName]));
+        syncTouchButtons({ vibrateOnNew: e.pointerType === 'touch' });
+      });
+      for (const evName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+        btnEl.addEventListener(evName, (e) => {
+          if (activeTouchPointers.delete(e.pointerId)) {
+            syncTouchButtons();
+          }
+        });
+      }
+    }
+
     function handleWindowBlur() {
       heldKeys.clear();
+      clearTouchInput();
     }
 
     function handleDocumentHidden() {
+      clearTouchInput();
       if (autoFight.getState().active) {
         stopAutoFight();
       }
       writeUnloadSnapshot();
+      releaseWakeLock();
       if (emu && emu.isPlaying && !isBusy) {
         emu.pause();
         syncControls();
@@ -1706,6 +2281,8 @@
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
+    window.addEventListener('touchstart', resumeAudioSafely, { passive: true });
+    window.addEventListener('touchend', resumeAudioSafely, { passive: true });
     window.addEventListener('pagehide', () => {
       writeUnloadSnapshot();
       if (pipWindow && !pipWindow.closed) {
@@ -1725,6 +2302,9 @@
       } else if (document.visibilityState === 'visible') {
         clearTimeout(pipHiddenPauseTimer);
         pipHiddenPauseTimer = 0;
+        if (emu?.isPlaying) {
+          requestWakeLock();
+        }
       }
     });
 
@@ -1768,6 +2348,7 @@
       });
     }
 
+    syncTouchControlsVisibility();
     syncMiniPlayerButton();
 
     window.__retroIdle = {
@@ -1775,6 +2356,14 @@
       loadRom,
       getSpeed: () => currentSpeed,
       setSpeed,
+      getTouchControls: () => ({
+        visible: !touchGamepadEl.hidden,
+        held: Array.from(heldTouchButtons).sort(),
+        setVisible: (val) => {
+          touchControlsOverride = val === null ? null : Boolean(val);
+          syncTouchControlsVisibility();
+        },
+      }),
       getMiniPlayer: () => ({
         supported: SUPPORTS_DOCUMENT_PIP,
         open: isMiniPlayerOpen(),

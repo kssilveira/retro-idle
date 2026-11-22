@@ -14,6 +14,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **ROM loading & auto-resume:** Load `.gb` / `.gbc` files via file picker, full-page drag-and-drop, or `?rom=<url>`. Your last ROM, auto-save state, and battery SRAM persist locally in `IndexedDB`.
 - **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators.
 - **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
+- **Mobile & touch support:** Automatically displays multi-touch Game Boy controls (thumb-slide D-Pad, B/A, Start/Select) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
 - **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, and speed controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
 - **Pokémon Red / Blue / Yellow Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, or `POKEMON YELLOW` ROM is loaded.

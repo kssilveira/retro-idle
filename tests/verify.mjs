@@ -11,6 +11,8 @@ const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
 const IMPORTED_SAV_PATH = path.join(TMP_DIR, 'imported.sav');
 const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
 const SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot.png');
+const MOBILE_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-mobile.png');
+const MOBILE_LANDSCAPE_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-mobile-landscape.png');
 const HTTP_PORT = 18765;
 const CDP_PORT = 19222;
 
@@ -836,6 +838,223 @@ async function main() {
     const shot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
 
+    // Desktop Touch Pad toggle check + Phone Portrait & Landscape Multi-Touch E2E checks
+    const desktopTouchInitial = await client.eval(`window.__retroIdle.getTouchControls()`);
+    assert.equal(desktopTouchInitial.visible, false, 'Touch gamepad should be hidden on desktop by default');
+
+    await client.eval(`document.getElementById('touch-pad-btn').click()`);
+    const desktopTouchShown = await client.eval(`({
+      ...window.__retroIdle.getTouchControls(),
+      btnActive: document.getElementById('touch-pad-btn').classList.contains('active'),
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(desktopTouchShown.visible, true, 'Touch Pad click should show touch gamepad');
+    assert.equal(desktopTouchShown.btnActive, true, 'Touch Pad button should show active state');
+    assert.notEqual(desktopTouchShown.activeTag, 'BUTTON', 'Touch Pad button must blur after click');
+
+    await client.eval(`document.getElementById('touch-pad-btn').click()`);
+    assert.equal(
+      await client.eval(`window.__retroIdle.getTouchControls().visible`),
+      false,
+      'Second Touch Pad click should hide touch gamepad'
+    );
+    await client.eval(`window.__retroIdle.getTouchControls().setVisible(null)`);
+
+    // 1. Portrait Phone (390x844) + Multi-Touch + D-Pad slide
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await client.send('Emulation.setTouchEmulationEnabled', {
+      enabled: true,
+      maxTouchPoints: 5,
+    });
+
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getTouchControls().visible === true`),
+      5000,
+      40
+    );
+
+    const portraitLayout = await client.eval(`
+      (() => {
+        const screenRect = document.getElementById('screen').getBoundingClientRect();
+        const gamepadRect = document.getElementById('touch-gamepad').getBoundingClientRect();
+        const rightRect = document.querySelector('[data-gb-btn="right"]').getBoundingClientRect();
+        const upRect = document.querySelector('[data-gb-btn="up"]').getBoundingClientRect();
+        const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          screenVisible: screenRect.width > 100 && screenRect.height > 100,
+          gamepadBottom: gamepadRect.bottom,
+          rightCenter: { x: Math.round(rightRect.left + rightRect.width / 2), y: Math.round(rightRect.top + rightRect.height / 2) },
+          upCenter: { x: Math.round(upRect.left + upRect.width / 2), y: Math.round(upRect.top + upRect.height / 2) },
+          aCenter: { x: Math.round(aRect.left + aRect.width / 2), y: Math.round(aRect.top + aRect.height / 2) },
+        };
+      })()
+    `);
+    assert.ok(
+      portraitLayout.scrollWidth <= portraitLayout.innerWidth,
+      `Portrait overflow: ${portraitLayout.scrollWidth} > ${portraitLayout.innerWidth}`
+    );
+    assert.equal(portraitLayout.screenVisible, true, 'Portrait screen must be visible');
+    assert.ok(
+      portraitLayout.gamepadBottom <= 844,
+      `Portrait touch gamepad must fit within 844px height (bottom=${portraitLayout.gamepadBottom})`
+    );
+
+    const finger1Right = { x: portraitLayout.rightCenter.x, y: portraitLayout.rightCenter.y, id: 1 };
+    const finger1Up = { x: portraitLayout.upCenter.x, y: portraitLayout.upCenter.y, id: 1 };
+    const finger2A = { x: portraitLayout.aCenter.x, y: portraitLayout.aCenter.y, id: 2 };
+
+    // Finger 1 holds D-Pad right
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [finger1Right],
+    });
+    const afterRight = await client.eval(`({
+      held: window.__retroIdle.getTouchControls().held,
+      rightPressed: document.querySelector('[data-gb-btn="right"]').classList.contains('pressed'),
+    })`);
+    assert.deepEqual(afterRight.held, ['right']);
+    assert.equal(afterRight.rightPressed, true);
+
+    // Finger 2 holds A while Finger 1 stays on D-Pad right -> BGP flips to 0x1B
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [finger1Right, finger2A],
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0x1b`),
+      5000,
+      30
+    );
+    const afterMultiTouch = await client.eval(`({
+      held: window.__retroIdle.getTouchControls().held,
+      aPressed: document.querySelector('[data-gb-btn="a"]').classList.contains('pressed'),
+      rightPressed: document.querySelector('[data-gb-btn="right"]').classList.contains('pressed'),
+    })`);
+    assert.deepEqual(afterMultiTouch.held, ['a', 'right']);
+    assert.equal(afterMultiTouch.aPressed, true);
+    assert.equal(afterMultiTouch.rightPressed, true);
+
+    // Release both touches via standard CDP touchEnd (touchPoints: []) -> BGP restores to 0xE4
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`),
+      5000,
+      30
+    );
+    assert.deepEqual(
+      await client.eval(`window.__retroIdle.getTouchControls().held`),
+      [],
+      'All touch buttons must release on touchEnd'
+    );
+
+    // Slide Finger 1 from D-Pad right to D-Pad up without lifting
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [finger1Right],
+    });
+    assert.deepEqual(
+      await client.eval(`window.__retroIdle.getTouchControls().held`),
+      ['right']
+    );
+
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [finger1Up],
+    });
+    const afterSlide = await client.eval(`({
+      held: window.__retroIdle.getTouchControls().held,
+      upPressed: document.querySelector('[data-gb-btn="up"]').classList.contains('pressed'),
+      rightPressed: document.querySelector('[data-gb-btn="right"]').classList.contains('pressed'),
+    })`);
+    assert.deepEqual(afterSlide.held, ['up']);
+    assert.equal(afterSlide.upPressed, true);
+    assert.equal(afterSlide.rightPressed, false);
+
+    // Release Finger 1
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    });
+    assert.deepEqual(
+      await client.eval(`window.__retroIdle.getTouchControls().held`),
+      [],
+      'All touch buttons must release on touchEnd'
+    );
+
+    const mobileShot = await client.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(MOBILE_SCREENSHOT_PATH, Buffer.from(mobileShot.data, 'base64'));
+
+    // 2. Landscape Phone (844x390)
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 844,
+      height: 390,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+
+    const landscapeLayout = await client.eval(`
+      (() => {
+        const screenRect = document.getElementById('screen').getBoundingClientRect();
+        const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
+        const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+        const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          dpadRight: dpadRect.right,
+          screenLeft: screenRect.left,
+          screenRight: screenRect.right,
+          aLeft: aRect.left,
+          screenBottom: screenRect.bottom,
+          dpadBottom: dpadRect.bottom,
+          aBottom: aRect.bottom,
+          startBottom: startRect.bottom,
+        };
+      })()
+    `);
+    assert.ok(
+      landscapeLayout.scrollWidth <= landscapeLayout.innerWidth,
+      `Landscape overflow: ${landscapeLayout.scrollWidth} > ${landscapeLayout.innerWidth}`
+    );
+    assert.ok(
+      landscapeLayout.dpadRight <= landscapeLayout.screenLeft + 8,
+      `Expected D-Pad left of screen in landscape (${landscapeLayout.dpadRight} <= ${landscapeLayout.screenLeft})`
+    );
+    assert.ok(
+      landscapeLayout.screenRight <= landscapeLayout.aLeft + 8,
+      `Expected A button right of screen in landscape (${landscapeLayout.screenRight} <= ${landscapeLayout.aLeft})`
+    );
+    assert.ok(
+      Math.max(
+        landscapeLayout.screenBottom,
+        landscapeLayout.dpadBottom,
+        landscapeLayout.aBottom,
+        landscapeLayout.startBottom
+      ) <= 390,
+      `Landscape handheld controls must fit inside 390px height (${JSON.stringify(landscapeLayout)})`
+    );
+
+    const landscapeShot = await client.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(MOBILE_LANDSCAPE_SCREENSHOT_PATH, Buffer.from(landscapeShot.data, 'base64'));
+
+    await client.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await client.send('Emulation.clearDeviceMetricsOverride');
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getTouchControls().visible === false`),
+      5000,
+      40
+    );
+
     // Synthetic Pokémon Yellow CGB/MBC5 boot + WRAM Auto-Fight detection verification
     const docYellow = await client.send('DOM.getDocument');
     const yellowInputNode = await client.send('DOM.querySelector', {
@@ -956,6 +1175,19 @@ async function main() {
         profile: yellowCheck.profile,
         pokeCenterName: yellowCheck.pokeCenterName,
         healStatus: yellowCheck.healStatus,
+      },
+      mobileCheck: {
+        portraitBottom: portraitLayout.gamepadBottom,
+        landscapeMaxBottom: Math.round(
+          Math.max(
+            landscapeLayout.screenBottom,
+            landscapeLayout.dpadBottom,
+            landscapeLayout.aBottom,
+            landscapeLayout.startBottom
+          )
+        ),
+        mobileScreenshot: MOBILE_SCREENSHOT_PATH,
+        landscapeScreenshot: MOBILE_LANDSCAPE_SCREENSHOT_PATH,
       },
       screenshot: SCREENSHOT_PATH,
     });
