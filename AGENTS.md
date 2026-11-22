@@ -1,22 +1,27 @@
 # AGENTS.md — Handoff Context for `retro-idle`
 
-## 1. Current Repository State (commit `24e2732`)
-- **Zero-build playable browser prototype** in [index.html](index.html) powered by vendored MIT-licensed `binjgb` WASM ([vendor/binjgb/](vendor/binjgb/)):
+## 1. Current Repository State (commit `c0bcff7`)
+- **Zero-build playable browser prototype** in [index.html](index.html) + [autofight.js](autofight.js) powered by vendored MIT-licensed `binjgb` WASM ([vendor/binjgb/](vendor/binjgb/)):
   - `vendor/binjgb/binjgb.js` (`13,029` bytes)
   - `vendor/binjgb/binjgb.wasm` (`88,652` bytes)
   - `vendor/binjgb/LICENSE` (MIT)
-- **Implemented features in `index.html`:**
+- **Implemented features in `index.html` and `autofight.js`:**
   - `.gb` / `.gbc` file picker (`#rom-input`) and full-page drag-and-drop (`loadRom`), plus `?rom=<url>` support. (`.zip` files are rejected with a clear unzip prompt.)
   - Last-ROM persistence in `IndexedDB` so refreshing or reopening auto-boots the previous ROM.
   - Keyboard (`Arrow Keys` / `WASD`, `X` = A, `Z` = B, `Enter` = Start, `Shift` / `Tab` = Select) + Gamepad API input.
   - Transport controls: **Pause/Resume** (`#toggle-play`), **Reset** (`#reset-btn`), **Save State** (`#save-state-btn`), **Load State** (`#load-state-btn`), **Export `.sav`** (`#export-sav-btn`), and **Import `.sav`** (`#import-sav-btn` + `#sav-input`).
+  - **Pokémon Red/Blue Auto-Fight** (`#auto-fight-btn`, `#auto-fight-status`, [autofight.js](autofight.js)):
+    - Auto-enabled for `POKEMON RED` / `POKEMON BLUE` ROM headers (`isPokemonRedBlueTitle`); stopped via `#auto-fight-btn`, `Escape`, Pause, Reset, Load State, Import `.sav`, Load ROM, or `visibilitychange` (`hidden`).
+    - `#auto-fight-status` is kept separate from `#status` so `tests/verify.mjs` status assertions remain untouched.
+    - Per-GB-frame `onFrame` hook inside `BinjgbEmulator.stepFrame` (`EVENT_NEW_FRAME`) + `setOverrideButtons(btns)`.
+    - Live Gen 1 WRAM + `wTileMap` (`0xC3A0`) snapshot (`readPokemonRedSnapshot`): 2-tile tethered overworld pacing (auto-rotates `right → left → up → down` when blocked, re-anchors if stuck returning), wild battle navigation (`FIGHT` → first attack slot with `PP > 0` skipping `NON_ATTACK_MOVES` like Growl), and immediate neutral-button stops on `out of PP`, `fainted`, `learning a move` (textbox regex `/\blearn|trying to|Delete an|forgotten/` or party move-list diff), `trainer battle`, and `map changed`.
   - Automatic unload/tab-hide state snapshot and auto-resume on ROM load (`— resumed auto-save`).
   - Debounced (`500 ms`) + pause/unload battery SRAM flushing via `_emulator_was_ext_ram_updated`.
-  - Debug hook: `window.__retroIdle = { getEmulator: () => emu, loadRom }` (`emu.readMem(addr)` reads live Game Boy memory).
+  - Debug hook: `window.__retroIdle = { getEmulator: () => emu, loadRom, getAutoFight: () => ({ ...autoFight.getState(), start, stop, snapshot }) }` (`emu.readMem(addr)` reads live Game Boy memory).
 - **Helper scripts:**
   - [serve.sh](serve.sh) — serves repo root on `http://127.0.0.1:${1:-8000}/` via `python3 -m http.server`.
   - [open-chrome.sh](open-chrome.sh) — launches `google-chrome` with `--remote-debugging-port=${2:-9222}` and persistent profile `${XDG_CACHE_HOME:-$HOME/.cache}/retro-idle-chrome`.
-- **GitHub Pages deployment:** Empty [.nojekyll](.nojekyll) at repo root serves static files directly from `main` (`/ (root)`) at `https://kssilveira.github.io/retro-idle/` without Jekyll processing. Keep asset paths in `index.html` relative (`./vendor/binjgb/...`) for subpath hosting; `IndexedDB` (`retro-idle`) and `localStorage` (`retro-idle:unload`) are already namespaced for the shared `kssilveira.github.io` origin, and `binjgb` requires no COOP/COEP headers.
+- **GitHub Pages deployment:** Empty [.nojekyll](.nojekyll) at repo root serves static files directly from `main` (`/ (root)`) at `https://kssilveira.github.io/retro-idle/` without Jekyll processing. Keep module/asset paths in `index.html` relative (`./autofight.js`, `./vendor/binjgb/...`) for subpath hosting; `IndexedDB` (`retro-idle`) and `localStorage` (`retro-idle:unload`) are already namespaced for the shared `kssilveira.github.io` origin, and `binjgb` requires no COOP/COEP headers.
 - **Roadmap:** See [docs/stage-1-plan.md](docs/stage-1-plan.md).
 
 ---
@@ -38,6 +43,9 @@
 - **Unload persistence without permissions-policy errors:** Chrome blocks `unload` listeners (`Permissions policy violation: unload is not allowed in this document`). Use `pagehide`, `beforeunload`, and `visibilitychange` (`hidden`) to write base64 snapshots synchronously to `localStorage`, then commit into `IndexedDB` on next load (`consumePendingUnload`).
 - **Keyboard focus trap & shortcut safety:** Call `blur()` after file inputs and button clicks so `INPUT_TAGS` checks don't block Game Boy keys; ignore `ctrlKey || altKey || metaKey` (not `shiftKey`, which is `Select`) so `Ctrl+R` / `F5` / DevTools continue to work.
 - **Headless / non-gesture audio:** Skip pushing audio buffers while `audioCtx.state !== 'running'` and safely `resume()` on user gestures (`pointerdown`, `keydown`, clicks).
+- **Stale Gen 1 menu WRAM:** `wTopMenuItemY`/`wCurrentMenuItem` remain populated outside menus, so menu detection is gated on live `wTileMap` (`0xC3A0`) text (`FIGHT`+`RUN`, `TYPE`) and rendered cursor `0xED` (`▶`, move slots starting at row `13`), returning neutral on the first frame of `MoveSelectionMenu` before `0xED` draws.
+- **Stale `wBattleMon` on battle entry:** `wBattleMonHP`/`wBattleMonPP` hold prior-battle or zero values until `SendOutMon` runs during the wild battle intro; `battleMonReady` guards battle faint/PP checks.
+- **Refresh-rate-independent FSM ticks:** Drive automation from `EVENT_NEW_FRAME` rather than `requestAnimationFrame` so pulse/cooldown timings stay locked to Game Boy VBlank frames on 120/144 Hz monitors.
 
 ---
 
@@ -55,13 +63,15 @@
 ## 5. Environment, Testing & Copyright Boundaries
 - **Installed tools:** `node v24.21.0` (has native `fetch` and `WebSocket`), `python3`, `google-chrome` (`158.0.8127.36`). **No `npm` or `npx` is on `PATH`**, so `/browser` Chrome DevTools MCP cannot launch; use `./open-chrome.sh` + a Node 24 CDP WebSocket client on `http://127.0.0.1:9222` to inspect live tabs or run headless verification.
 - **Copyright rule:** **Never** download, search for, link to, or commit copyrighted commercial ROMs, BIOS dumps, or Nintendo assets (keep personal ROMs strictly outside the repo, e.g. `~/Downloads/roms/`).
-- **Regression test suite:** End-to-end verification lives in [tests/](tests/), with generated test artifacts written under gitignored `tests/.tmp/` (plus `*.gb`, `*.gbc`, `*.sav` in [.gitignore](.gitignore)):
+- **Regression & unit test suite:** Tests live in [tests/](tests/), with generated test artifacts written under gitignored `tests/.tmp/` (plus `*.gb`, `*.gbc`, `*.sav` in [.gitignore](.gitignore)):
+  - [tests/autofight.test.mjs](tests/autofight.test.mjs) → unit tests for Pokémon Red/Blue Auto-Fight (`pickAttackSlot`, 2-tile pacing/rotation, battle menu & move navigation, and `out of PP` / `fainted` / `learning a move` / `trainer battle` / `map changed` stops). Run with `node --test tests/autofight.test.mjs`.
   - [tests/make-test-rom.mjs](tests/make-test-rom.mjs) → builds a clean 64 KB `MBC3 + RAM + BATTERY` (`0x13`) test ROM with 32 KB SRAM and a non-copyrighted `0xe06c8834` shift-XOR header check.
   - [tests/verify.mjs](tests/verify.mjs) → runs end-to-end CDP Chrome checks (MBC3 banking, SRAM, animation, `KeyX` input, `.sav` export/import, 5× Load State, Pause/Save/Load, zero-click `Page.reload()`, Reset, and zero console/log errors). Run with `node tests/verify.mjs`.
 
 ---
 
 ## 6. Next Steps (per `docs/stage-1-plan.md`)
+- Basic Pokémon Red/Blue WRAM reading + 1x Auto-Fight (tethered pacing, wild battle attacking, and `out of PP` / `fainted` / `learning a move` / `trainer battle` / `map changed` stops) are now implemented in [autofight.js](autofight.js).
 - Bootstrap a package manager (`npm`/`pnpm`) when ready to migrate to Vite + TypeScript; when adding a build step, set `base: '/retro-idle/'` in `vite.config.ts` and switch GitHub Pages to a GitHub Actions workflow deploying `dist/`.
-- **M2 — ROM Profile & Live WRAM HUD:** Add `pokered` CRC32 identification + live WRAM polling via `emu.readMem(addr)` (note big-endian Gen 1 HP values, `wBattleMon*` vs `wPartyMon1*`, `& 0x3F` PP bitmask, and internal species ID → National Dex mapping).
-- **M3–M5 — Auto-Grind FSM, Undo Ring Buffer, Background Worker & Alerts:** Extract `BinjgbEmulator` into `EmulatorCore` (`src/core/emulator.ts`) inside a Web Worker for throttled background tabs (`1x`–`20x`), implement pure TS `AutoGrindFSM`, rolling save-state ring buffer, and PiP/notifications.
+- **M2/M3 polish — Live WRAM Telemetry HUD & Configurable Stops:** Surface lead level, HP/MaxHP, PP, species, and configurable stop conditions (target level, min HP%, uncaught/target species via internal-ID → National Dex mapping) plus generic macro fallback for non-Pokémon ROMs.
+- **M3–M5 — Background Worker Turbo, Undo Ring Buffer & Alerts:** Extract `BinjgbEmulator` into `EmulatorCore` (`src/core/emulator.ts`) inside a Web Worker for throttled background tabs (`1x`–`20x`), add a rolling save-state ring buffer for one-click Undo Auto-Pilot, and add Document PiP / Web Notifications.
