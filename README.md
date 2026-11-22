@@ -13,7 +13,8 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **Pokémon Red / Blue Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED` or `POKEMON BLUE` ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl).
-  - Automatically stops and releases all buttons when **out of PP**, **fainted**, **learning a move**, entering a **trainer battle**, or **changing maps** (or when you press `Escape` or click **Stop Auto-Fight**).
+  - **Automatic PokéCenter heal-and-return:** Passively records a loop-pruned path from the most recently visited PokéCenter (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP, Auto-Fight flees wild battles, walks back to heal with Nurse Joy, returns to your grinding spot, and resumes fighting.
+  - Automatically stops and releases all buttons on **out of PP without a visited PokéCenter** (`missing PokéCenter path`), **one-way ledge / blocked path** (prompting you to use a returnable path next time), **fainted**, **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
 
 ## Controls
 
