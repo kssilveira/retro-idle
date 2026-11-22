@@ -149,6 +149,22 @@
       min-height: 1.2em;
     }
 
+    #auto-fight-status.error {
+      color: #f87171;
+    }
+
+    #pokecenter-status {
+      width: 100%;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      min-height: 1.15em;
+    }
+
+    #pokecenter-status.linked {
+      color: #34d399;
+    }
+
     .legend {
       margin: 0;
       font-size: 0.8rem;
@@ -196,6 +212,7 @@
 
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
     <div id="auto-fight-status" hidden></div>
+    <div id="pokecenter-status" hidden></div>
 
     <p class="legend">
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
@@ -296,6 +313,7 @@
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
     const autoFightStatusEl = document.getElementById('auto-fight-status');
+    const pokeCenterStatusEl = document.getElementById('pokecenter-status');
     const speedButtons = Array.from(document.querySelectorAll('.speed-btn'));
     const statusEl = document.getElementById('status');
 
@@ -314,6 +332,9 @@
 
     const autoFight = createAutoFight();
     let lastAutoFightText = '';
+    let lastAutoFightIsError = false;
+    let lastPokeCenterText = '';
+    let lastPokeCenterLinked = false;
     const heldKeys = new Set();
 
     function getAudioContext() {
@@ -724,11 +745,49 @@
       }
     }
 
-    function setAutoFightStatus(text) {
-      if (text === lastAutoFightText) return;
+    function setAutoFightStatus(text, { isError = false } = {}) {
+      if (text === lastAutoFightText && isError === lastAutoFightIsError) return;
       lastAutoFightText = text;
+      lastAutoFightIsError = isError;
       autoFightStatusEl.textContent = text;
       autoFightStatusEl.hidden = !text;
+      autoFightStatusEl.classList.toggle('error', Boolean(text) && isError);
+    }
+
+    function syncPokeCenterStatus() {
+      const supported = Boolean(emu) && isPokemonRedBlueTitle(currentRomTitle);
+      if (!supported) {
+        if (lastPokeCenterText !== '' || lastPokeCenterLinked !== false || !pokeCenterStatusEl.hidden) {
+          lastPokeCenterText = '';
+          lastPokeCenterLinked = false;
+          pokeCenterStatusEl.textContent = '';
+          pokeCenterStatusEl.classList.remove('linked');
+          pokeCenterStatusEl.hidden = true;
+        }
+        return;
+      }
+
+      const st = autoFight.getState();
+      let text;
+      let linked = false;
+      if (st.inPokeCenter && st.pokeCenterName) {
+        text = `PokéCenter visited: ${st.pokeCenterName} — exit to record return path`;
+        linked = true;
+      } else if (st.pokeCenterName && st.trailLength > 0) {
+        const stepsLabel = st.trailLength === 1 ? 'step' : 'steps';
+        text = `PokéCenter path active: ${st.pokeCenterName} (${st.trailLength} ${stepsLabel})`;
+        linked = true;
+      } else {
+        text = 'PokéCenter: not visited yet — visit one to enable auto-heal return';
+      }
+
+      if (text !== lastPokeCenterText || linked !== lastPokeCenterLinked || pokeCenterStatusEl.hidden) {
+        lastPokeCenterText = text;
+        lastPokeCenterLinked = linked;
+        pokeCenterStatusEl.textContent = text;
+        pokeCenterStatusEl.classList.toggle('linked', linked);
+        pokeCenterStatusEl.hidden = false;
+      }
     }
 
     function setSpeed(speed) {
@@ -750,13 +809,15 @@
       autoFightBtn.disabled = !supported || isBusy;
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
       autoFightBtn.classList.toggle('active', active);
+      syncPokeCenterStatus();
     }
 
     function stopAutoFight(reason = null) {
       autoFight.stop(reason || 'manual');
       emu?.setOverrideButtons(null);
       syncAutoFightButton();
-      setAutoFightStatus(reason && reason !== 'manual' ? `Auto-Fight stopped: ${reason}` : '');
+      const showReason = Boolean(reason && reason !== 'manual');
+      setAutoFightStatus(showReason ? `Auto-Fight stopped: ${reason}` : '', { isError: showReason });
     }
 
     function formatAutoFightPhase(res, state) {
@@ -793,6 +854,7 @@
       } else {
         autoFight.observe(readPokemonRedOverworldPos((a) => emu.readMem(a)));
       }
+      syncPokeCenterStatus();
     }
 
     function startAutoFight() {

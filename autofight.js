@@ -28,21 +28,33 @@ const STANDARD_POKECENTER_CONFIG = Object.freeze({
   standY: 3,
   exitX: 3,
   exitY: 7,
+  tileset: 6,
 });
 
+function makeStandardPokeCenter(name) {
+  return Object.freeze({ ...STANDARD_POKECENTER_CONFIG, name });
+}
+
 export const POKECENTER_CONFIGS = Object.freeze({
-  0x29: STANDARD_POKECENTER_CONFIG, // Viridian City
-  0x3a: STANDARD_POKECENTER_CONFIG, // Pewter City
-  0x40: STANDARD_POKECENTER_CONFIG, // Cerulean City
-  0x44: STANDARD_POKECENTER_CONFIG, // Mt. Moon / Route 4
-  0x51: STANDARD_POKECENTER_CONFIG, // Rock Tunnel / Route 10
-  0x59: STANDARD_POKECENTER_CONFIG, // Vermilion City
-  0x85: STANDARD_POKECENTER_CONFIG, // Celadon City
-  0x8d: STANDARD_POKECENTER_CONFIG, // Lavender Town
-  0x9a: STANDARD_POKECENTER_CONFIG, // Fuchsia City
-  0xab: STANDARD_POKECENTER_CONFIG, // Cinnabar Island
-  0xae: Object.freeze({ standX: 7, standY: 7, exitX: 7, exitY: 11 }), // Indigo Plateau Lobby
-  0xb6: STANDARD_POKECENTER_CONFIG, // Saffron City
+  0x29: makeStandardPokeCenter('Viridian PokéCenter'),
+  0x3a: makeStandardPokeCenter('Pewter PokéCenter'),
+  0x40: makeStandardPokeCenter('Cerulean PokéCenter'),
+  0x44: makeStandardPokeCenter('Mt. Moon PokéCenter'),
+  0x51: makeStandardPokeCenter('Rock Tunnel PokéCenter'),
+  0x59: makeStandardPokeCenter('Vermilion PokéCenter'),
+  0x85: makeStandardPokeCenter('Celadon PokéCenter'),
+  0x8d: makeStandardPokeCenter('Lavender PokéCenter'),
+  0x9a: makeStandardPokeCenter('Fuchsia PokéCenter'),
+  0xab: makeStandardPokeCenter('Cinnabar PokéCenter'),
+  0xae: Object.freeze({
+    standX: 7,
+    standY: 7,
+    exitX: 7,
+    exitY: 11,
+    tileset: 2,
+    name: 'Indigo Plateau Lobby',
+  }),
+  0xb6: makeStandardPokeCenter('Saffron PokéCenter'),
 });
 
 const FACING_TO_DIR = Object.freeze({
@@ -63,7 +75,10 @@ const ONE_WAY_STUCK_FRAMES = 45;
 const BLOCKED_STUCK_FRAMES = 240;
 const HEAL_STALL_FRAMES = 1200;
 const MAX_TRAIL_LENGTH = 2000;
+const WARP_SNAP_GRACE_FRAMES = 60;
 const MOVEMENT_ONE_WAY_MASK = 0xc0;
+const OUT_OF_PP_MISSING_POKECENTER_REASON =
+  'out of PP (missing PokéCenter path — visit a PokéCenter first)';
 
 export function isPokeCenterMap(mapId) {
   return Object.hasOwn(POKECENTER_CONFIGS, mapId);
@@ -104,6 +119,9 @@ export function readPokemonRedOverworldPos(readMem) {
     map: r(0xd35e),
     y: r(0xd361),
     x: r(0xd362),
+    tileset: r(0xd367),
+    mapHeight: r(0xd368) * 2,
+    mapWidth: r(0xd369) * 2,
     partyCount: Math.min(r(0xd163), 6),
     facing: r(0xc109),
     movementFlags: r(0xd736),
@@ -118,6 +136,9 @@ export function readPokemonRedSnapshot(readMem) {
   const map = r(0xd35e);
   const y = r(0xd361);
   const x = r(0xd362);
+  const tileset = r(0xd367);
+  const mapHeight = r(0xd368) * 2;
+  const mapWidth = r(0xd369) * 2;
   const facing = r(0xc109);
   const movementFlags = r(0xd736);
 
@@ -212,6 +233,9 @@ export function readPokemonRedSnapshot(readMem) {
     map,
     y,
     x,
+    tileset,
+    mapHeight,
+    mapWidth,
     facing,
     movementFlags,
     partyCount,
@@ -287,14 +311,18 @@ export function createAutoFight() {
 
   // Passive PokéCenter breadcrumb trail state
   let pokeCenterMap = null;
+  let pokeCenterTileset = null;
   let trail = [];
   let wasInPokeCenter = false;
+  let pendingWarpSnapFrames = 0;
+  let warpStartTileset = null;
   let prevOverworld = null;
 
   // Round-trip heal & return state
   let travelMode = null;
   let pathIdx = -1;
   let stuckFrames = 0;
+  let lastTravelDir = 'up';
   let healSubphase = null;
   let healStartTotalPp = 0;
   let healStartTotalHp = 0;
@@ -307,8 +335,11 @@ export function createAutoFight() {
 
   function clearTrail() {
     pokeCenterMap = null;
+    pokeCenterTileset = null;
     trail = [];
     wasInPokeCenter = false;
+    pendingWarpSnapFrames = 0;
+    warpStartTileset = null;
     prevOverworld = null;
   }
 
@@ -353,22 +384,40 @@ export function createAutoFight() {
     if (active || !snap || snap.isInBattle !== 0 || (snap.partyCount ?? 1) === 0) {
       return;
     }
+    if (snap.x === 0xff || snap.y === 0xff) {
+      return;
+    }
+    if (snap.mapWidth > 0 && snap.x >= snap.mapWidth) {
+      return;
+    }
+    if (snap.mapHeight > 0 && snap.y >= snap.mapHeight) {
+      return;
+    }
 
     const facingDir = dirFromFacing(snap.facing);
 
     if (isPokeCenterMap(snap.map)) {
       pokeCenterMap = snap.map;
+      pokeCenterTileset = snap.tileset ?? POKECENTER_CONFIGS[snap.map].tileset;
       trail = [];
       wasInPokeCenter = true;
+      pendingWarpSnapFrames = 0;
+      warpStartTileset = null;
       prevOverworld = { map: snap.map, x: snap.x, y: snap.y, facingDir };
       return;
     }
 
     if (wasInPokeCenter) {
+      // Wait for LoadMapHeader after WarpFound2 changes wCurMap before committing exit coords.
+      if (snap.tileset !== undefined && pokeCenterTileset !== null && snap.tileset === pokeCenterTileset) {
+        return;
+      }
       wasInPokeCenter = false;
       const enterDir = prevOverworld?.facingDir || 'down';
       const exitDir = OPPOSITE_DIR[enterDir] || 'up';
       trail = [{ map: snap.map, x: snap.x, y: snap.y, enterDir, exitDir, oneWay: false }];
+      pendingWarpSnapFrames = WARP_SNAP_GRACE_FRAMES;
+      warpStartTileset = snap.tileset ?? null;
       prevOverworld = { map: snap.map, x: snap.x, y: snap.y, facingDir };
       return;
     }
@@ -380,6 +429,12 @@ export function createAutoFight() {
 
     const last = trail[trail.length - 1];
     if (snap.map === last.map && snap.x === last.x && snap.y === last.y) {
+      if (pendingWarpSnapFrames > 0) {
+        pendingWarpSnapFrames -= 1;
+        if (pendingWarpSnapFrames === 0) {
+          warpStartTileset = null;
+        }
+      }
       prevOverworld = {
         map: snap.map,
         x: snap.x,
@@ -391,12 +446,32 @@ export function createAutoFight() {
 
     if (snap.map === last.map) {
       const dist = Math.abs(snap.x - last.x) + Math.abs(snap.y - last.y);
+      const tilesetChanged =
+        snap.tileset !== undefined && warpStartTileset !== null && snap.tileset !== warpStartTileset;
+      if (pendingWarpSnapFrames > 0 && (dist > 2 || tilesetChanged)) {
+        last.x = snap.x;
+        last.y = snap.y;
+        pendingWarpSnapFrames = 0;
+        warpStartTileset = null;
+        prevOverworld = {
+          map: snap.map,
+          x: snap.x,
+          y: snap.y,
+          facingDir: facingDir || prevOverworld?.facingDir || null,
+        };
+        return;
+      }
+      pendingWarpSnapFrames = 0;
+      warpStartTileset = null;
       if (dist > 2) {
         pokeCenterMap = null;
         trail = [];
         prevOverworld = { map: snap.map, x: snap.x, y: snap.y, facingDir };
         return;
       }
+    } else {
+      pendingWarpSnapFrames = 0;
+      warpStartTileset = null;
     }
 
     const loopIdx = trail.findIndex((n) => n.map === snap.map && n.x === snap.x && n.y === snap.y);
@@ -419,6 +494,8 @@ export function createAutoFight() {
       const enterDir = prevOverworld?.facingDir || facingDir || 'up';
       const exitDir = OPPOSITE_DIR[enterDir] || 'down';
       trail.push({ map: snap.map, x: snap.x, y: snap.y, enterDir, exitDir, oneWay });
+      pendingWarpSnapFrames = WARP_SNAP_GRACE_FRAMES;
+      warpStartTileset = snap.tileset ?? null;
     } else {
       trail.push({ map: snap.map, x: snap.x, y: snap.y, enterDir: null, exitDir: null, oneWay });
     }
@@ -579,6 +656,9 @@ export function createAutoFight() {
     const cfg = POKECENTER_CONFIGS[pokeCenterMap];
 
     if (healSubphase === 'to_nurse') {
+      if (snap.tileset !== undefined && snap.tileset !== cfg.tileset) {
+        return neutral();
+      }
       if (snap.x > cfg.standX) {
         return { active: true, buttons: { ...NEUTRAL_BUTTONS, left: true }, stopReason: null, phase };
       }
@@ -627,7 +707,7 @@ export function createAutoFight() {
     }
 
     if (healSubphase === 'exiting') {
-      if (snap.map !== pokeCenterMap) {
+      if (snap.map !== pokeCenterMap && (snap.tileset === undefined || snap.tileset !== cfg.tileset)) {
         if (snap.map !== trail[0]?.map) {
           return stop('map changed');
         }
@@ -677,6 +757,16 @@ export function createAutoFight() {
       return stop('map changed');
     }
 
+    if (snap.x === 0xff || snap.y === 0xff) {
+      phase = 'returning';
+      return {
+        active: true,
+        buttons: { ...NEUTRAL_BUTTONS, [lastTravelDir]: true },
+        stopReason: null,
+        phase,
+      };
+    }
+
     for (let k = Math.min(pathIdx, trail.length - 1); k >= 0; k--) {
       if (trail[k].map === snap.map && trail[k].x === snap.x && trail[k].y === snap.y) {
         pathIdx = k - 1;
@@ -706,7 +796,10 @@ export function createAutoFight() {
       }
     }
 
-    if (snap.map === lastPos.map && snap.x === lastPos.x && snap.y === lastPos.y) {
+    if (snap.map !== lastPos.map) {
+      stuckFrames = 0;
+      overworldCooldown = 30;
+    } else if (snap.x === lastPos.x && snap.y === lastPos.y) {
       if (overworldCooldown > 0) {
         overworldCooldown -= 1;
       } else {
@@ -729,6 +822,7 @@ export function createAutoFight() {
     }
 
     lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    lastTravelDir = dir;
     phase = 'returning';
     return {
       active: true,
@@ -746,6 +840,16 @@ export function createAutoFight() {
 
     if (!trail.some((n) => n.map === snap.map)) {
       return stop('map changed');
+    }
+
+    if (snap.x === 0xff || snap.y === 0xff) {
+      phase = 'walking_back';
+      return {
+        active: true,
+        buttons: { ...NEUTRAL_BUTTONS, [lastTravelDir]: true },
+        stopReason: null,
+        phase,
+      };
     }
 
     for (let k = Math.max(0, pathIdx); k < trail.length; k++) {
@@ -781,7 +885,10 @@ export function createAutoFight() {
       }
     }
 
-    if (snap.map === lastPos.map && snap.x === lastPos.x && snap.y === lastPos.y) {
+    if (snap.map !== lastPos.map) {
+      stuckFrames = 0;
+      overworldCooldown = 30;
+    } else if (snap.x === lastPos.x && snap.y === lastPos.y) {
       if (overworldCooldown > 0) {
         overworldCooldown -= 1;
       } else {
@@ -797,6 +904,7 @@ export function createAutoFight() {
     }
 
     lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    lastTravelDir = dir;
     phase = 'walking_back';
     return {
       active: true,
@@ -816,7 +924,7 @@ export function createAutoFight() {
         beginReturning(snap);
         return stepReturning(snap, party);
       }
-      return stop('out of PP');
+      return stop(OUT_OF_PP_MISSING_POKECENTER_REASON);
     }
     if (snap.map !== anchor.map) {
       return stop('map changed');
@@ -982,7 +1090,7 @@ export function createAutoFight() {
           beginFleeing('returning');
           return startPulse('b', 3, 10);
         }
-        return stop('out of PP');
+        return stop(OUT_OF_PP_MISSING_POKECENTER_REASON);
       }
       if (!snap.cursorPos) return neutral();
       const currentSlot = snap.cursorPos.row - (snap.moveFirstRow ?? MOVE_FIRST_ROW);
@@ -1003,7 +1111,7 @@ export function createAutoFight() {
           beginFleeing('returning');
           return stepFleeMainMenu(snap);
         }
-        return stop('out of PP');
+        return stop(OUT_OF_PP_MISSING_POKECENTER_REASON);
       }
       if (!snap.cursorPos) return neutral();
       const targetRow = snap.fightPos.row;
@@ -1034,6 +1142,9 @@ export function createAutoFight() {
       stopReason,
       anchor,
       pokeCenterMap,
+      pokeCenterName:
+        pokeCenterMap !== null ? POKECENTER_CONFIGS[pokeCenterMap]?.name ?? null : null,
+      inPokeCenter: wasInPokeCenter,
       hasHealPath: hasHealPath(anchor?.map ?? prevOverworld?.map),
       trailLength: trail.length,
       healSubphase,

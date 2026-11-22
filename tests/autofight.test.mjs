@@ -225,7 +225,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP');
+  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.match(res.stopReason, /out of PP/i);
+  assert.match(res.stopReason, /missing PokéCenter/i);
 
   // Mid-animation after using final 1 PP: battleMon.pp becomes 0 during attack animation,
   // should NOT stop until menu reopens or battle ends.
@@ -266,7 +268,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP');
+  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.match(res.stopReason, /out of PP/i);
+  assert.match(res.stopReason, /missing PokéCenter/i);
 
   // Move Selection Menu with 0 attack PP also stops
   const af3 = createAutoFight();
@@ -280,7 +284,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP');
+  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.match(res.stopReason, /out of PP/i);
+  assert.match(res.stopReason, /missing PokéCenter/i);
 });
 
 test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer battle', () => {
@@ -762,4 +768,198 @@ test('exportTrail / importTrail round-trip preserves heal route and rejects inva
   assert.equal(res.active, true);
   assert.equal(res.phase, 'returning');
   assert.equal(res.buttons.up, true);
+});
+
+test('warp fade-out resilience: preserves trail when wCurMap updates before wXCoord/wYCoord and wCurMapTileset (with and without tileset)', () => {
+  // 1. Real PokéCenter exit fade-out WITH tileset (tileset 6 -> 0 after 24 frames)
+  const af1 = createAutoFight();
+  af1.observe({
+    isInBattle: 0,
+    map: 0x29,
+    x: 3,
+    y: 7,
+    tileset: 6,
+    mapWidth: 14,
+    mapHeight: 8,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+  assert.equal(af1.getState().inPokeCenter, true);
+  assert.equal(af1.getState().pokeCenterName, 'Viridian PokéCenter');
+
+  // 24 fade-out frames where wCurMap is already 1 (Viridian City) while tileset=6 and coords=(3,7)
+  for (let i = 0; i < 24; i++) {
+    af1.observe({
+      isInBattle: 0,
+      map: 1,
+      x: 3,
+      y: 7,
+      tileset: 6,
+      mapWidth: 14,
+      mapHeight: 8,
+      partyCount: 1,
+      facing: 0x00,
+      movementFlags: 0,
+    });
+  }
+
+  // Frame 25: LoadMapHeader updates tileset=0 and LoadDestinationWarpPosition sets (23, 25)
+  af1.observe({
+    isInBattle: 0,
+    map: 1,
+    x: 23,
+    y: 25,
+    tileset: 0,
+    mapWidth: 40,
+    mapHeight: 36,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+  af1.observe({
+    isInBattle: 0,
+    map: 1,
+    x: 23,
+    y: 26,
+    tileset: 0,
+    mapWidth: 40,
+    mapHeight: 36,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+
+  const t1 = af1.exportTrail();
+  assert.ok(t1, 'Trail must survive PokéCenter exit fade-out');
+  assert.deepEqual(
+    t1.trail.map((n) => [n.map, n.x, n.y]),
+    [
+      [1, 23, 25],
+      [1, 23, 26],
+    ]
+  );
+  assert.equal(af1.getState().hasHealPath, true);
+  assert.equal(af1.getState().inPokeCenter, false);
+  assert.equal(af1.getState().pokeCenterName, 'Viridian PokéCenter');
+
+  // 2. Warp fade-out WITHOUT tileset / same-tileset gate warp (stale coords for 24 frames, then jump)
+  const af2 = createAutoFight();
+  af2.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  for (let i = 0; i < 24; i++) {
+    af2.observe({ isInBattle: 0, map: 1, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  }
+  // Frame 25 snaps to real outside coords (23, 25) and continues walking
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  // Turn north at (23, 26) before entering gate map (0x2f)
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  // Walk into a gate map (0x2f): wCurMap changes first for 24 frames at old coords (23, 26)
+  for (let i = 0; i < 24; i++) {
+    af2.observe({ isInBattle: 0, map: 0x2f, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  }
+  // Destination inside gate snaps to (4, 7) -> preserves enterDir/exitDir from (23, 26)
+  af2.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 7, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  const t2 = af2.exportTrail();
+  assert.ok(t2, 'Trail must survive warp fade-outs without tileset');
+  assert.deepEqual(
+    t2.trail.map((n) => [n.map, n.x, n.y]),
+    [
+      [1, 23, 25],
+      [1, 23, 26],
+      [0x2f, 4, 7],
+    ]
+  );
+  assert.equal(t2.trail[0].exitDir, 'up');
+  assert.equal(t2.trail[2].enterDir, 'up');
+  assert.equal(t2.trail[2].exitDir, 'down');
+});
+
+test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing waits out warp fade-out', () => {
+  const af = createAutoFight();
+  af.observe({
+    isInBattle: 0,
+    map: 0x29,
+    x: 3,
+    y: 7,
+    tileset: 6,
+    mapWidth: 14,
+    mapHeight: 8,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+  af.observe({
+    isInBattle: 0,
+    map: 1,
+    x: 23,
+    y: 25,
+    tileset: 0,
+    mapWidth: 40,
+    mapHeight: 36,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+  af.observe({
+    isInBattle: 0,
+    map: 1,
+    x: 23,
+    y: 26,
+    tileset: 0,
+    mapWidth: 40,
+    mapHeight: 36,
+    partyCount: 1,
+    facing: 0x00,
+    movementFlags: 0,
+  });
+
+  // Transient OOB values during CheckMapConnections must be ignored without wiping trail
+  af.observe({ isInBattle: 0, map: 1, x: 0xff, y: 26, tileset: 0, mapWidth: 40, mapHeight: 36, partyCount: 1 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 0xff, tileset: 0, mapWidth: 40, mapHeight: 36, partyCount: 1 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 36, tileset: 0, mapWidth: 40, mapHeight: 36, partyCount: 1 });
+  assert.equal(af.exportTrail().trail.length, 2);
+
+  // Start out-of-PP return -> enter PokéCenter during fade-out (map=0x29 while tileset=0, coords=(23,25))
+  const zeroPpParty = [
+    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+  ];
+  af.start(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
+  let res = af.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
+  assert.equal(res.phase, 'returning');
+
+  // Entering PokéCenter: first frames have map=0x29, tileset=0 (fade-out) -> must output neutral and wait
+  res = af.step(makeSnapshot({ map: 0x29, x: 23, y: 25, tileset: 0, party: zeroPpParty }));
+  assert.equal(res.phase, 'healing');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+
+  // Once tileset=6 loads at (3,7), walks up to Nurse Joy
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 7, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  assert.equal(res.buttons.up, true);
+
+  // Walk to (3,3) -> talk -> heal -> close dialogue -> exiting
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 12; i++) {
+    af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  }
+
+  const healedParty = [
+    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
+  ];
+  af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: healedParty }));
+  for (let i = 0; i < 8; i++) {
+    af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: healedParty }));
+  }
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 4, tileset: 6, facing: 0x00, party: healedParty }));
+  assert.equal(af.getState().healSubphase, 'exiting');
+
+  // Exiting PokéCenter: during fade-out map=1 while tileset=6 -> stays in 'healing' (does NOT start walking_back early)
+  res = af.step(makeSnapshot({ map: 1, x: 3, y: 7, tileset: 6, party: healedParty }));
+  assert.equal(res.phase, 'healing');
+
+  // Once tileset=0 loads at (23, 25) -> transitions cleanly to 'walking_back'
+  res = af.step(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0, party: healedParty }));
+  assert.equal(res.phase, 'walking_back');
+  assert.equal(res.buttons.down, true);
 });
