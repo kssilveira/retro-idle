@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>retro-idle — Game Boy Emulator</title>
+  <link rel="icon" href="data:," />
   <style>
     :root {
       color-scheme: dark;
@@ -158,7 +159,7 @@
   </main>
 
   <script type="module">
-    import { WasmBoy } from 'https://cdn.jsdelivr.net/npm/wasmboy@0.7.1/dist/wasmboy.wasm.esm.js';
+    const WASMBOY_URL = 'https://cdn.jsdelivr.net/npm/wasmboy@0.7.1/dist/wasmboy.wasm.esm.js';
 
     const canvas = document.getElementById('screen');
     const romInput = document.getElementById('rom-input');
@@ -167,6 +168,112 @@
     const saveStateBtn = document.getElementById('save-state-btn');
     const loadStateBtn = document.getElementById('load-state-btn');
     const statusEl = document.getElementById('status');
+
+    function base64ToBytes(b64) {
+      return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    }
+
+    function bytesToBase64(bytes) {
+      const chunks = [];
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        chunks.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
+      }
+      return btoa(chunks.join(''));
+    }
+
+    function findUniqueSubarray(haystack, needle) {
+      let matchIdx = -1;
+      for (let i = 0; i <= haystack.length - needle.length; i++) {
+        let matched = true;
+        for (let j = 0; j < needle.length; j++) {
+          if (haystack[i + j] !== needle[j]) {
+            matched = false;
+            break;
+          }
+        }
+        if (matched) {
+          if (matchIdx !== -1) {
+            throw new Error('Ambiguous WasmBoy patch target');
+          }
+          matchIdx = i;
+        }
+      }
+      if (matchIdx === -1) {
+        throw new Error('Could not locate WasmBoy patch target');
+      }
+      return matchIdx;
+    }
+
+    async function loadPatchedWasmBoy() {
+      const res = await fetch(WASMBOY_URL);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch WasmBoy (${res.status})`);
+      }
+      let source = await res.text();
+
+      const workerUrls = source.match(/data:application\/javascript;base64,[A-Za-z0-9+/=]+/g) || [];
+      let patchedWorker = false;
+
+      for (const workerUrl of workerUrls) {
+        const prefix = 'data:application/javascript;base64,';
+        let workerJs = atob(workerUrl.slice(prefix.length));
+        const wasmMatch = workerJs.match(/data:application\/wasm;base64,([A-Za-z0-9+/=]+)/);
+        if (!wasmMatch) continue;
+
+        const wasmBytes = base64ToBytes(wasmMatch[1]);
+        // Fix 5 upstream wasmboy@0.7.1 loadState() slot typos (passing variable instead of saveStateSlot)
+        const wasmPatches = [
+          { expected: [0x23, 0x49, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x07] },
+          { expected: [0x23, 0x63, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x08] },
+          { expected: [0x23, 0xea, 0x01, 0x41, 0x32, 0x6c, 0x41, 0x84, 0x08, 0x6a], replace: [0x41, 0x01, 0x01] },
+          { expected: [0x23, 0x76, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x09] },
+          { expected: [0x23, 0x85, 0x01, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x0a, 0x01] },
+        ];
+        for (const p of wasmPatches) {
+          const idx = findUniqueSubarray(wasmBytes, p.expected);
+          wasmBytes.set(p.replace, idx);
+        }
+        if (!WebAssembly.validate(wasmBytes)) {
+          throw new Error('Patched WasmBoy WASM core failed validation');
+        }
+
+        workerJs = workerJs.replace(wasmMatch[0], `data:application/wasm;base64,${bytesToBase64(wasmBytes)}`);
+        source = source.replace(workerUrl, `${prefix}${btoa(workerJs)}`);
+        patchedWorker = true;
+        break;
+      }
+
+      if (!patchedWorker) {
+        throw new Error('Could not locate WasmBoy WASM worker');
+      }
+
+      // Wrap raw ArrayBuffers returned by GET_MEMORY after loadState() in Uint8Array
+      const loadStateAssignTarget =
+        'this.cartridgeRam=a.message[u.CARTRIDGE_RAM];this.gameboyMemory=a.message[u.GAMEBOY_MEMORY];this.paletteMemory=a.message[u.PALETTE_MEMORY];this.internalState=a.message[u.INTERNAL_STATE]';
+      const loadStateAssignFixed =
+        'this.cartridgeRam=new Uint8Array(a.message[u.CARTRIDGE_RAM]);this.gameboyMemory=new Uint8Array(a.message[u.GAMEBOY_MEMORY]);this.paletteMemory=new Uint8Array(a.message[u.PALETTE_MEMORY]);this.internalState=new Uint8Array(a.message[u.INTERNAL_STATE])';
+      if (!source.includes(loadStateAssignTarget)) {
+        throw new Error('Could not locate WasmBoy loadState memory assignment');
+      }
+      source = source.replace(loadStateAssignTarget, loadStateAssignFixed);
+
+      const blobUrl = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
+      try {
+        const mod = await import(blobUrl);
+        return mod.WasmBoy;
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    }
+
+    let WasmBoy;
+    try {
+      WasmBoy = await loadPatchedWasmBoy();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = `Failed to initialize emulator: ${err?.message || err}`;
+      throw err;
+    }
 
     const CARTRIDGE_TYPES = {
       0x00: 'ROM ONLY',
@@ -369,6 +476,12 @@
             isGbcEnabled: true,
             isGbcColorizationEnabled: true,
             enableBootROMIfAvailable: false,
+            onPause: () => {
+              if (hasLoadedRom && !isBusy) syncControls();
+            },
+            onPlay: () => {
+              if (hasLoadedRom && !isBusy) syncControls();
+            },
           },
           canvas
         );
@@ -421,7 +534,7 @@
       } catch (err) {
         hadError = true;
         console.error(err);
-        statusEl.textContent = `Action failed: ${err?.message || err}`;
+        statusEl.textContent = `Action failed: ${err?.message || err || 'emulator worker timed out'}`;
       } finally {
         isBusy = false;
         if (hadError) {
