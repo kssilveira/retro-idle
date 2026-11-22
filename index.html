@@ -210,7 +210,12 @@
 
   <script src="./vendor/binjgb/binjgb.js"></script>
   <script type="module">
-    import { createAutoFight, isPokemonRedBlueTitle, readPokemonRedSnapshot } from './autofight.js';
+    import {
+      createAutoFight,
+      isPokemonRedBlueTitle,
+      readPokemonRedOverworldPos,
+      readPokemonRedSnapshot,
+    } from './autofight.js';
 
     const SCREEN_WIDTH = 160;
     const SCREEN_HEIGHT = 144;
@@ -754,6 +759,21 @@
       setAutoFightStatus(reason && reason !== 'manual' ? `Auto-Fight stopped: ${reason}` : '');
     }
 
+    function formatAutoFightPhase(res, state) {
+      switch (res.phase) {
+        case 'returning':
+          return 'Auto-Fight: returning to PokéCenter...';
+        case 'fleeing':
+          return 'Auto-Fight: fleeing battle...';
+        case 'healing':
+          return 'Auto-Fight: healing at PokéCenter...';
+        case 'walking_back':
+          return 'Auto-Fight: walking back to grind spot...';
+        default:
+          return `Auto-Fight: ${res.phase}...${state.hasHealPath ? ' (PokéCenter path ready)' : ''}`;
+      }
+    }
+
     function stepAutoFight() {
       if (!emu || !autoFight.getState().active) return;
       const snap = readPokemonRedSnapshot((a) => emu.readMem(a));
@@ -763,7 +783,16 @@
         return;
       }
       emu.setOverrideButtons(res.buttons);
-      setAutoFightStatus(`Auto-Fight: ${res.phase}...`);
+      setAutoFightStatus(formatAutoFightPhase(res, autoFight.getState()));
+    }
+
+    function onEmulatorFrame() {
+      if (!emu || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      if (autoFight.getState().active) {
+        stepAutoFight();
+      } else {
+        autoFight.observe(readPokemonRedOverworldPos((a) => emu.readMem(a)));
+      }
     }
 
     function startAutoFight() {
@@ -819,6 +848,12 @@
       if (emu.sramSize > 0) {
         writes.push(dbPut(`sram:${currentRomId}`, emu.getExtRam()));
       }
+      if (isPokemonRedBlueTitle(currentRomTitle)) {
+        const trail = autoFight.exportTrail();
+        writes.push(
+          trail ? dbPut(`pokeTrail:${currentRomId}`, trail) : dbDelete(`pokeTrail:${currentRomId}`)
+        );
+      }
       await Promise.all(writes);
     }
 
@@ -826,12 +861,14 @@
       if (!emu || !currentRomId) return;
       try {
         const sram = emu.sramSize > 0 ? emu.getExtRam() : new Uint8Array();
+        const pokeTrail = isPokemonRedBlueTitle(currentRomTitle) ? autoFight.exportTrail() : null;
         localStorage.setItem(
           UNLOAD_KEY,
           JSON.stringify({
             romId: currentRomId,
             state: bytesToBase64(emu.getSaveState()),
             sram: sram.length ? bytesToBase64(sram) : '',
+            pokeTrail,
           })
         );
       } catch (err) {
@@ -862,6 +899,11 @@
         await dbPut(`autoState:${parsed.romId}`, base64ToBytes(parsed.state));
         if (parsed.sram) {
           await dbPut(`sram:${parsed.romId}`, base64ToBytes(parsed.sram));
+        }
+        if (parsed.pokeTrail) {
+          await dbPut(`pokeTrail:${parsed.romId}`, parsed.pokeTrail);
+        } else if ('pokeTrail' in parsed) {
+          await dbDelete(`pokeTrail:${parsed.romId}`);
         }
       } catch (err) {
         console.warn('Could not restore pending unload snapshot:', err);
@@ -895,6 +937,7 @@
 
         stopAutoFight();
         await flushEmulatorPersistence();
+        autoFight.clearTrail();
         await consumePendingUnload();
 
         if (emu) {
@@ -908,21 +951,25 @@
         currentRomTitle = header ? header.title : label;
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
 
-        const [sram, autoState, manualState] = await Promise.all([
+        const [sram, autoState, manualState, savedTrail] = await Promise.all([
           dbGet(`sram:${currentRomId}`),
           dbGet(`autoState:${currentRomId}`),
           dbGet(`manualState:${currentRomId}`),
+          dbGet(`pokeTrail:${currentRomId}`),
         ]);
         hasManualSave = Boolean(manualState);
 
         emu = new BinjgbEmulator(binjgb, romBytes, sram, canvas, {
           onExtRamUpdated: scheduleSramFlush,
-          onFrame: stepAutoFight,
+          onFrame: onEmulatorFrame,
           speed: currentSpeed,
         });
 
         if (autoState && emu.loadState(autoState)) {
           loadStatusSuffix = ' — resumed auto-save';
+          if (isPokemonRedBlueTitle(currentRomTitle) && savedTrail) {
+            autoFight.importTrail(savedTrail);
+          }
         }
         emu.resume();
 
@@ -991,14 +1038,16 @@
 
     async function rebootWithSram(sramBytes) {
       stopAutoFight();
+      autoFight.clearTrail();
       clearTimeout(sramFlushTimer);
       if (sramBytes) await dbPut(`sram:${currentRomId}`, sramBytes);
       await dbDelete(`autoState:${currentRomId}`);
+      await dbDelete(`pokeTrail:${currentRomId}`);
       clearPendingUnloadFor(currentRomId);
       emu.destroy();
       emu = new BinjgbEmulator(binjgb, currentRomBytes, sramBytes, canvas, {
         onExtRamUpdated: scheduleSramFlush,
-        onFrame: stepAutoFight,
+        onFrame: onEmulatorFrame,
         speed: currentSpeed,
       });
       emu.resume();
@@ -1022,6 +1071,7 @@
     loadStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
         stopAutoFight();
+        autoFight.clearTrail();
         const state = await dbGet(`manualState:${currentRomId}`);
         if (!state || !emu.loadState(state)) {
           hasManualSave = false;
@@ -1195,6 +1245,7 @@
         ...autoFight.getState(),
         start: startAutoFight,
         stop: stopAutoFight,
+        clearTrail: () => autoFight.clearTrail(),
         snapshot: () => (emu ? readPokemonRedSnapshot((a) => emu.readMem(a)) : null),
       }),
     };
