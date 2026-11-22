@@ -194,7 +194,7 @@
       }
     }
 
-    function syncControls() {
+    function syncControls(statusSuffix = '') {
       togglePlayBtn.disabled = !hasLoadedRom || isBusy;
       resetBtn.disabled = !hasLoadedRom || isBusy;
       if (!hasLoadedRom) {
@@ -203,7 +203,39 @@
       }
       const playing = WasmBoy.isPlaying();
       togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
-      statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}`;
+      statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}${statusSuffix}`;
+    }
+
+    function isValidSaveState(state) {
+      const mem = state?.wasmboyMemory;
+      return Boolean(
+        mem &&
+        mem.cartridgeRam?.buffer &&
+        mem.gameBoyMemory?.buffer &&
+        mem.wasmBoyPaletteMemory?.buffer &&
+        mem.wasmBoyInternalState?.buffer &&
+        mem.wasmBoyInternalState.byteLength > 0
+      );
+    }
+
+    async function restoreLatestAutoSave() {
+      try {
+        const states = (await WasmBoy.getSaveStates()) || [];
+        const latestAutoSave = states
+          .filter((s) => s?.isAuto && isValidSaveState(s))
+          .sort((a, b) => (a.date || 0) - (b.date || 0))
+          .at(-1);
+
+        if (!latestAutoSave) {
+          return false;
+        }
+
+        await WasmBoy.loadState(latestAutoSave);
+        return true;
+      } catch (err) {
+        console.warn('Could not restore auto-save state:', err);
+        return false;
+      }
     }
 
     function parseRomHeader(bytes) {
@@ -249,6 +281,7 @@
     async function loadRom(romSource, fileName) {
       if (!romSource || isBusy) return;
       const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
+      let loadStatusSuffix = '';
       isBusy = true;
       syncControls();
       statusEl.textContent = `Loading ${label}...`;
@@ -267,10 +300,12 @@
         );
 
         await WasmBoy.loadROM(romSource);
+        const restoredAutoSave = await restoreLatestAutoSave();
         await WasmBoy.play();
 
         const header = await extractHeader(romSource, label);
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
+        loadStatusSuffix = restoredAutoSave ? ' — resumed auto-save' : '';
         hasLoadedRom = true;
       } catch (err) {
         console.error(err);
@@ -278,7 +313,7 @@
       } finally {
         isBusy = false;
         if (hasLoadedRom && !statusEl.textContent.startsWith('Failed')) {
-          syncControls();
+          syncControls(loadStatusSuffix);
         } else {
           togglePlayBtn.disabled = !hasLoadedRom;
           resetBtn.disabled = !hasLoadedRom;
