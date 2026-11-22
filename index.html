@@ -56,15 +56,47 @@
       letter-spacing: 0.02em;
     }
 
-    #screen {
+    .screen-slot {
       width: min(480px, 100%);
       aspect-ratio: 160 / 144;
-      height: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #screen {
+      width: 100%;
+      height: 100%;
       background: #0f172a;
       border: 2px solid var(--border);
       border-radius: 6px;
       image-rendering: pixelated;
       display: block;
+    }
+
+    .pip-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 20px;
+      background: #0f172a;
+      border: 2px dashed var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    .pip-placeholder[hidden] {
+      display: none;
+    }
+
+    .pip-placeholder p {
+      margin: 0;
     }
 
     .controls {
@@ -186,7 +218,13 @@
 <body>
   <main>
     <h1>retro-idle</h1>
-    <canvas id="screen" width="160" height="144"></canvas>
+    <div id="screen-slot" class="screen-slot">
+      <canvas id="screen" width="160" height="144"></canvas>
+      <div id="pip-placeholder" class="pip-placeholder" hidden>
+        <p>Playing in Mini-Player</p>
+        <button type="button" id="pip-return-btn">Return to Tab</button>
+      </div>
+    </div>
 
     <div class="controls">
       <label class="file-label" for="rom-input">Load ROM (.gb / .gbc)</label>
@@ -199,6 +237,7 @@
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
       <button type="button" id="auto-fight-btn" disabled title="Pokémon Red/Blue only">Auto-Fight</button>
+      <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
 
     <div class="speed-controls" id="speed-controls" role="group" aria-label="Emulator speed">
@@ -301,8 +340,12 @@
     };
 
     const INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'BUTTON']);
+    const SUPPORTS_DOCUMENT_PIP = 'documentPictureInPicture' in window;
 
+    const screenSlotEl = document.getElementById('screen-slot');
     const canvas = document.getElementById('screen');
+    const pipPlaceholderEl = document.getElementById('pip-placeholder');
+    const pipReturnBtn = document.getElementById('pip-return-btn');
     const romInput = document.getElementById('rom-input');
     const togglePlayBtn = document.getElementById('toggle-play');
     const resetBtn = document.getElementById('reset-btn');
@@ -312,6 +355,7 @@
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
+    const miniPlayerBtn = document.getElementById('mini-player-btn');
     const autoFightStatusEl = document.getElementById('auto-fight-status');
     const healCenterStatusEl = document.getElementById('heal-center-status');
     const speedButtons = Array.from(document.querySelectorAll('.speed-btn'));
@@ -329,6 +373,10 @@
     let hasManualSave = false;
     let isBusy = false;
     let sramFlushTimer = 0;
+    let pipWindow = null;
+    let pipUi = null;
+    let isOpeningPip = false;
+    let pipHiddenPauseTimer = 0;
 
     const autoFight = createAutoFight();
     let lastAutoFightText = '';
@@ -336,6 +384,14 @@
     let lastHealCenterText = '';
     let lastHealCenterLinked = false;
     const heldKeys = new Set();
+
+    function isMiniPlayerOpen() {
+      return Boolean(pipWindow && !pipWindow.closed);
+    }
+
+    function getActiveAnimationWindow() {
+      return isMiniPlayerOpen() ? pipWindow : window;
+    }
 
     function getAudioContext() {
       if (!audioCtx) {
@@ -364,8 +420,11 @@
     }
 
     function blurActiveElement() {
-      if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
+      for (const doc of [document, pipWindow?.document]) {
+        const active = doc?.activeElement;
+        if (active && active !== doc.body && typeof active.blur === 'function') {
+          active.blur();
+        }
       }
     }
 
@@ -446,12 +505,19 @@
     const dbDelete = (key) => withDb('readwrite', (s) => s.delete(key));
 
     class BinjgbEmulator {
-      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated, onFrame, speed = 1 } = {}) {
+      constructor(
+        module,
+        romBytes,
+        extRamBytes,
+        canvasEl,
+        { onExtRamUpdated, onFrame, speed = 1, animationWindow = window } = {}
+      ) {
         this.module = module;
         this.onExtRamUpdated = onExtRamUpdated;
         this.onFrame = onFrame;
         const parsedSpeed = Number(speed);
         this.speed = Number.isFinite(parsedSpeed) && parsedSpeed > 0 ? parsedSpeed : 1;
+        this.rafWindow = animationWindow && !animationWindow.closed ? animationWindow : window;
         this.overrideButtons = null;
         this.ctx = canvasEl.getContext('2d');
         this.imageData = this.ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -549,6 +615,23 @@
         this.speed = next;
         this.leftoverTicks = 0;
         this.audioStartSec = 0;
+      }
+
+      setAnimationWindow(win) {
+        const nextWin = win && !win.closed ? win : window;
+        if (nextWin === this.rafWindow) return;
+        const wasPlaying = this.rafId !== 0;
+        if (wasPlaying) {
+          if (!this.rafWindow.closed) {
+            this.rafWindow.cancelAnimationFrame(this.rafId);
+          }
+          this.rafId = 0;
+        }
+        this.rafWindow = nextWin;
+        this.lastSec = 0;
+        if (wasPlaying && !this.destroyed) {
+          this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
+        }
       }
 
       getExtRam() {
@@ -666,7 +749,11 @@
 
       stepFrame = (ms) => {
         if (this.destroyed || this.rafId === 0) return;
-        this.rafId = requestAnimationFrame(this.stepFrame);
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+          this.lastSec = 0;
+        }
+        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
         this.syncInput();
 
         const sec = ms / 1000;
@@ -709,16 +796,25 @@
 
       resume() {
         if (this.destroyed || this.rafId !== 0) return;
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+        }
         this.lastSec = 0;
         this.audioStartSec = 0;
         resumeAudioSafely();
-        this.rafId = requestAnimationFrame(this.stepFrame);
+        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
       }
 
       pause() {
         if (this.rafId !== 0) {
-          cancelAnimationFrame(this.rafId);
+          if (!this.rafWindow.closed) {
+            this.rafWindow.cancelAnimationFrame(this.rafId);
+          }
           this.rafId = 0;
+        }
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+          this.lastSec = 0;
         }
         this.audioStartSec = 0;
         if (audioCtx && audioCtx.state === 'running') {
@@ -752,6 +848,7 @@
       autoFightStatusEl.textContent = text;
       autoFightStatusEl.hidden = !text;
       autoFightStatusEl.classList.toggle('error', Boolean(text) && isError);
+      syncMiniPlayerUi();
     }
 
     function syncHealCenterStatus() {
@@ -763,6 +860,7 @@
           healCenterStatusEl.textContent = '';
           healCenterStatusEl.classList.remove('linked');
           healCenterStatusEl.hidden = true;
+          syncMiniPlayerUi();
         }
         return;
       }
@@ -787,6 +885,7 @@
         healCenterStatusEl.textContent = text;
         healCenterStatusEl.classList.toggle('linked', linked);
         healCenterStatusEl.hidden = false;
+        syncMiniPlayerUi();
       }
     }
 
@@ -801,6 +900,63 @@
         btn.classList.toggle('active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       }
+      syncMiniPlayerUi();
+    }
+
+    function syncMiniPlayerButton() {
+      if (!SUPPORTS_DOCUMENT_PIP) {
+        miniPlayerBtn.disabled = true;
+        miniPlayerBtn.textContent = 'Mini-Player';
+        miniPlayerBtn.classList.remove('active');
+        miniPlayerBtn.title = 'Document Picture-in-Picture requires Chrome or Edge desktop';
+        return;
+      }
+      const open = isMiniPlayerOpen();
+      miniPlayerBtn.disabled = !open && (!emu || isBusy || isOpeningPip);
+      miniPlayerBtn.textContent = open ? 'Exit Mini-Player' : 'Mini-Player';
+      miniPlayerBtn.classList.toggle('active', open);
+      miniPlayerBtn.title = 'Pop out always-on-top mini-player (Chrome / Edge desktop)';
+    }
+
+    function syncMiniPlayerUi() {
+      if (!pipUi || !isMiniPlayerOpen()) return;
+      pipWindow.document.title = currentRomTitle
+        ? `${currentRomTitle} — retro-idle`
+        : 'retro-idle — Mini-Player';
+
+      const loaded = Boolean(emu);
+      const playing = Boolean(emu?.isPlaying);
+      pipUi.togglePlayBtn.disabled = !loaded || isBusy;
+      pipUi.togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
+
+      const pokemonSupported = loaded && isPokemonRedBlueTitle(currentRomTitle);
+      const autoActive = autoFight.getState().active;
+      pipUi.autoFightBtn.hidden = !pokemonSupported;
+      pipUi.autoFightBtn.disabled = !pokemonSupported || isBusy;
+      pipUi.autoFightBtn.textContent = autoActive ? 'Stop' : 'Auto-Fight';
+      pipUi.autoFightBtn.classList.toggle('active', autoActive);
+
+      pipUi.speedBtn.textContent = `${currentSpeed}x`;
+      pipUi.speedBtn.classList.toggle('active', currentSpeed > 1);
+
+      if (lastAutoFightText) {
+        pipUi.statusPrimaryEl.textContent = lastAutoFightText;
+        pipUi.statusPrimaryEl.classList.toggle('error', lastAutoFightIsError);
+        pipUi.statusPrimaryEl.classList.toggle('accent', !lastAutoFightIsError);
+      } else {
+        pipUi.statusPrimaryEl.textContent = `${playing ? '' : 'Paused · '}${currentRomTitle || 'No ROM'}`;
+        pipUi.statusPrimaryEl.classList.remove('error', 'accent');
+      }
+
+      if (pokemonSupported && lastHealCenterText) {
+        pipUi.statusHealEl.textContent = lastHealCenterText;
+        pipUi.statusHealEl.classList.toggle('linked', lastHealCenterLinked);
+        pipUi.statusHealEl.hidden = false;
+      } else {
+        pipUi.statusHealEl.textContent = '';
+        pipUi.statusHealEl.classList.remove('linked');
+        pipUi.statusHealEl.hidden = true;
+      }
     }
 
     function syncAutoFightButton() {
@@ -810,6 +966,7 @@
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
       autoFightBtn.classList.toggle('active', active);
       syncHealCenterStatus();
+      syncMiniPlayerUi();
     }
 
     function stopAutoFight(reason = null) {
@@ -880,17 +1037,296 @@
       exportSavBtn.disabled = !canUseSav;
       importSavBtn.disabled = !canUseSav;
       syncAutoFightButton();
+      syncMiniPlayerButton();
+      syncMiniPlayerUi();
     }
 
     function syncControls(statusSuffix = '') {
       setActionButtonsDisabled();
       if (!emu) {
         togglePlayBtn.textContent = 'Pause';
+        syncMiniPlayerUi();
         return;
       }
       const playing = emu.isPlaying;
       togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
       statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}${statusSuffix}`;
+      syncMiniPlayerUi();
+    }
+
+    const PIP_STYLES = `
+      :root {
+        color-scheme: dark;
+        --bg: #0b1120;
+        --panel: #111827;
+        --border: #1e293b;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+      }
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      [hidden] {
+        display: none;
+      }
+      .pip-root {
+        width: 100%;
+        height: 100%;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: var(--panel);
+      }
+      .pip-stage {
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        display: grid;
+        place-items: center;
+        container-type: size;
+      }
+      .pip-stage #screen {
+        width: min(100cqw, calc(100cqh * 160 / 144));
+        height: min(100cqh, calc(100cqw * 144 / 160));
+        aspect-ratio: 160 / 144;
+        image-rendering: pixelated;
+        background: #0f172a;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        display: block;
+      }
+      .pip-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .pip-controls button {
+        font: inherit;
+        font-size: 0.75rem;
+        line-height: 1.2;
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #1e293b;
+        color: var(--text);
+        cursor: pointer;
+      }
+      .pip-controls button:not(:disabled):hover {
+        border-color: var(--accent);
+      }
+      .pip-controls button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .pip-controls button.active {
+        border-color: var(--accent);
+        background: #0c4a6e;
+      }
+      .pip-status {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        text-align: center;
+        flex-shrink: 0;
+        font-size: 0.72rem;
+        line-height: 1.25;
+        color: var(--muted);
+      }
+      .pip-status-primary,
+      .pip-status-heal {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pip-status-primary.accent {
+        color: var(--accent);
+      }
+      .pip-status-primary.error {
+        color: #f87171;
+      }
+      .pip-status-heal.linked {
+        color: #34d399;
+      }
+    `;
+
+    function togglePlayPause() {
+      return runTransportAction(async () => {
+        if (emu.isPlaying) {
+          stopAutoFight();
+          emu.pause();
+          await flushEmulatorPersistence();
+        } else {
+          emu.resume();
+        }
+      });
+    }
+
+    function toggleAutoFight() {
+      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      resumeAudioSafely();
+      if (autoFight.getState().active) {
+        stopAutoFight('manual');
+      } else {
+        startAutoFight();
+      }
+      blurActiveElement();
+    }
+
+    function cycleSpeed() {
+      resumeAudioSafely();
+      const idx = SPEED_OPTIONS.indexOf(currentSpeed);
+      const next = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
+      setSpeed(next);
+      blurActiveElement();
+    }
+
+    function handleMiniPlayerPageHide() {
+      teardownMiniPlayer();
+    }
+
+    function teardownMiniPlayer({ closeWindow = false, focusMain = false } = {}) {
+      if (!pipWindow) return;
+      clearTimeout(pipHiddenPauseTimer);
+      pipHiddenPauseTimer = 0;
+
+      const win = pipWindow;
+      pipWindow = null;
+      pipUi = null;
+      heldKeys.clear();
+
+      win.removeEventListener('keydown', handleKeyDown);
+      win.removeEventListener('keyup', handleKeyUp);
+      win.removeEventListener('blur', handleWindowBlur);
+      win.removeEventListener('pointerdown', resumeAudioSafely);
+      win.removeEventListener('pagehide', handleMiniPlayerPageHide);
+
+      screenSlotEl.insertBefore(canvas, pipPlaceholderEl);
+      pipPlaceholderEl.hidden = true;
+      emu?.setAnimationWindow(window);
+      emu?.presentFrame();
+      syncMiniPlayerButton();
+
+      if (focusMain) {
+        window.focus();
+      }
+      if (closeWindow && !win.closed) {
+        try {
+          win.close();
+        } catch {}
+      }
+      if (document.visibilityState === 'hidden') {
+        writeUnloadSnapshot();
+        pipHiddenPauseTimer = setTimeout(() => {
+          pipHiddenPauseTimer = 0;
+          if (!isMiniPlayerOpen() && document.visibilityState === 'hidden') {
+            handleDocumentHidden();
+          }
+        }, 150);
+      }
+    }
+
+    async function openMiniPlayer() {
+      if (!SUPPORTS_DOCUMENT_PIP || !emu || isBusy || isOpeningPip || isMiniPlayerOpen()) return;
+      isOpeningPip = true;
+      syncMiniPlayerButton();
+      try {
+        const win = await window.documentPictureInPicture.requestWindow({ width: 340, height: 376 });
+        if (!emu || win.closed) {
+          if (!win.closed) {
+            try {
+              win.close();
+            } catch {}
+          }
+          return;
+        }
+
+        const doc = win.document;
+        const styleEl = doc.createElement('style');
+        styleEl.textContent = PIP_STYLES;
+        doc.head.appendChild(styleEl);
+
+        const root = doc.createElement('div');
+        root.className = 'pip-root';
+
+        const stage = doc.createElement('div');
+        stage.className = 'pip-stage';
+        stage.appendChild(canvas);
+
+        const controls = doc.createElement('div');
+        controls.className = 'pip-controls';
+
+        const makePipButton = (action, label, onClick) => {
+          const btn = doc.createElement('button');
+          btn.type = 'button';
+          btn.dataset.pipAction = action;
+          btn.textContent = label;
+          btn.addEventListener('click', onClick);
+          return btn;
+        };
+
+        const pipTogglePlayBtn = makePipButton('toggle-play', 'Pause', togglePlayPause);
+        const pipAutoFightBtn = makePipButton('auto-fight', 'Auto-Fight', toggleAutoFight);
+        const pipSpeedBtn = makePipButton('speed', `${currentSpeed}x`, cycleSpeed);
+        const pipReturnActionBtn = makePipButton('return', 'Return to Tab', () => {
+          resumeAudioSafely();
+          teardownMiniPlayer({ closeWindow: true, focusMain: true });
+        });
+
+        controls.append(pipTogglePlayBtn, pipAutoFightBtn, pipSpeedBtn, pipReturnActionBtn);
+
+        const statusBox = doc.createElement('div');
+        statusBox.className = 'pip-status';
+        const statusPrimaryEl = doc.createElement('div');
+        statusPrimaryEl.className = 'pip-status-primary';
+        const statusHealEl = doc.createElement('div');
+        statusHealEl.className = 'pip-status-heal';
+        statusHealEl.hidden = true;
+        statusBox.append(statusPrimaryEl, statusHealEl);
+
+        root.append(stage, controls, statusBox);
+        doc.body.replaceChildren(root);
+
+        pipPlaceholderEl.hidden = false;
+
+        win.addEventListener('keydown', handleKeyDown);
+        win.addEventListener('keyup', handleKeyUp);
+        win.addEventListener('blur', handleWindowBlur);
+        win.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
+        win.addEventListener('pagehide', handleMiniPlayerPageHide);
+
+        pipWindow = win;
+        pipUi = {
+          togglePlayBtn: pipTogglePlayBtn,
+          autoFightBtn: pipAutoFightBtn,
+          speedBtn: pipSpeedBtn,
+          returnBtn: pipReturnActionBtn,
+          statusPrimaryEl,
+          statusHealEl,
+        };
+
+        emu.setAnimationWindow(win);
+        emu.presentFrame();
+        syncMiniPlayerUi();
+        blurActiveElement();
+      } catch (err) {
+        console.warn('Could not open Mini-Player:', err);
+      } finally {
+        isOpeningPip = false;
+        syncMiniPlayerButton();
+      }
     }
 
     function scheduleSramFlush() {
@@ -1025,6 +1461,7 @@
           onExtRamUpdated: scheduleSramFlush,
           onFrame: onEmulatorFrame,
           speed: currentSpeed,
+          animationWindow: getActiveAnimationWindow(),
         });
 
         if (autoState && emu.loadState(autoState)) {
@@ -1043,6 +1480,9 @@
         statusEl.textContent = `Failed to load ROM: ${err?.message || err}`;
       } finally {
         isBusy = false;
+        if (!emu && isMiniPlayerOpen()) {
+          teardownMiniPlayer({ closeWindow: true });
+        }
         if (emu && !statusEl.textContent.startsWith('Failed')) {
           syncControls(loadStatusSuffix);
         } else {
@@ -1086,17 +1526,7 @@
       }
     });
 
-    togglePlayBtn.addEventListener('click', () =>
-      runTransportAction(async () => {
-        if (emu.isPlaying) {
-          stopAutoFight();
-          emu.pause();
-          await flushEmulatorPersistence();
-        } else {
-          emu.resume();
-        }
-      })
-    );
+    togglePlayBtn.addEventListener('click', togglePlayPause);
 
     async function rebootWithSram(sramBytes) {
       stopAutoFight();
@@ -1111,6 +1541,7 @@
         onExtRamUpdated: scheduleSramFlush,
         onFrame: onEmulatorFrame,
         speed: currentSpeed,
+        animationWindow: getActiveAnimationWindow(),
       });
       emu.resume();
     }
@@ -1152,14 +1583,21 @@
       });
     }
 
-    autoFightBtn.addEventListener('click', () => {
-      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+    autoFightBtn.addEventListener('click', toggleAutoFight);
+
+    miniPlayerBtn.addEventListener('click', () => {
       resumeAudioSafely();
-      if (autoFight.getState().active) {
-        stopAutoFight('manual');
+      if (isMiniPlayerOpen()) {
+        teardownMiniPlayer({ closeWindow: true });
       } else {
-        startAutoFight();
+        openMiniPlayer();
       }
+      blurActiveElement();
+    });
+
+    pipReturnBtn.addEventListener('click', () => {
+      resumeAudioSafely();
+      teardownMiniPlayer({ closeWindow: true, focusMain: true });
       blurActiveElement();
     });
 
@@ -1208,7 +1646,13 @@
       });
     });
 
-    window.addEventListener('keydown', (e) => {
+    function isInteractiveElementFocused(e) {
+      const activeDoc = e.view?.document || e.currentTarget?.document || document;
+      const active = activeDoc?.activeElement;
+      return Boolean(active && INPUT_TAGS.has(active.tagName));
+    }
+
+    function handleKeyDown(e) {
       resumeAudioSafely();
       if (e.code === 'Escape' && autoFight.getState().active) {
         stopAutoFight('manual');
@@ -1221,7 +1665,7 @@
         !e.ctrlKey &&
         !e.altKey &&
         !e.metaKey &&
-        !(document.activeElement && INPUT_TAGS.has(document.activeElement.tagName))
+        !isInteractiveElementFocused(e)
       ) {
         setSpeed(speedChoice);
         e.preventDefault();
@@ -1229,32 +1673,56 @@
       }
       const btn = KEY_MAP[e.code];
       if (!btn || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (document.activeElement && INPUT_TAGS.has(document.activeElement.tagName)) return;
+      if (isInteractiveElementFocused(e)) return;
       heldKeys.add(btn);
       e.preventDefault();
-    });
+    }
 
-    window.addEventListener('keyup', (e) => {
+    function handleKeyUp(e) {
       const btn = KEY_MAP[e.code];
       if (!btn) return;
       heldKeys.delete(btn);
-    });
+    }
 
-    window.addEventListener('blur', () => heldKeys.clear());
+    function handleWindowBlur() {
+      heldKeys.clear();
+    }
+
+    function handleDocumentHidden() {
+      if (autoFight.getState().active) {
+        stopAutoFight();
+      }
+      writeUnloadSnapshot();
+      if (emu && emu.isPlaying && !isBusy) {
+        emu.pause();
+        syncControls();
+        flushEmulatorPersistence();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
-    window.addEventListener('pagehide', writeUnloadSnapshot);
+    window.addEventListener('pagehide', () => {
+      writeUnloadSnapshot();
+      if (pipWindow && !pipWindow.closed) {
+        try {
+          pipWindow.close();
+        } catch {}
+      }
+    });
     window.addEventListener('beforeunload', writeUnloadSnapshot);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        if (autoFight.getState().active) {
-          stopAutoFight();
+        if (isMiniPlayerOpen()) {
+          writeUnloadSnapshot();
+          return;
         }
-        writeUnloadSnapshot();
-        if (emu && emu.isPlaying && !isBusy) {
-          emu.pause();
-          syncControls();
-          flushEmulatorPersistence();
-        }
+        handleDocumentHidden();
+      } else if (document.visibilityState === 'visible') {
+        clearTimeout(pipHiddenPauseTimer);
+        pipHiddenPauseTimer = 0;
       }
     });
 
@@ -1298,11 +1766,20 @@
       });
     }
 
+    syncMiniPlayerButton();
+
     window.__retroIdle = {
       getEmulator: () => emu,
       loadRom,
       getSpeed: () => currentSpeed,
       setSpeed,
+      getMiniPlayer: () => ({
+        supported: SUPPORTS_DOCUMENT_PIP,
+        open: isMiniPlayerOpen(),
+        openWindow: openMiniPlayer,
+        closeWindow: () => teardownMiniPlayer({ closeWindow: true }),
+        getWindow: () => (isMiniPlayerOpen() ? pipWindow : null),
+      }),
       getAutoFight: () => ({
         ...autoFight.getState(),
         start: startAutoFight,

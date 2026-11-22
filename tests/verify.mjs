@@ -64,11 +64,12 @@ class CDPClient {
     });
   }
 
-  async eval(expression) {
+  async eval(expression, options = {}) {
     const res = await this.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
+      ...options,
     });
     if (res.exceptionDetails) {
       throw new Error(`Eval exception: ${JSON.stringify(res.exceptionDetails)}`);
@@ -644,6 +645,188 @@ async function main() {
     assert.equal(speed1Info.speed, 1, 'Expected Digit1 hotkey to switch speed back to 1x');
     assert.equal(speed1Info.btn1Active, true, 'Expected 1x button active after Digit1');
 
+    // Document Picture-in-Picture Mini-Player checks (when supported by browser)
+    const miniSupported = await client.eval(`window.__retroIdle.getMiniPlayer().supported`);
+    let miniPlayerInfo = { supported: miniSupported };
+    if (miniSupported) {
+      const beforeOpen = await client.eval(`({
+        disabled: document.getElementById('mini-player-btn').disabled,
+        open: window.__retroIdle.getMiniPlayer().open,
+      })`);
+      assert.equal(beforeOpen.disabled, false, 'Mini-Player button should be enabled while ROM is loaded');
+      assert.equal(beforeOpen.open, false, 'Mini-Player should start closed');
+
+      await client.eval(`document.getElementById('mini-player-btn').click()`, { userGesture: true });
+      await waitFor(
+        async () => await client.eval(`window.__retroIdle.getMiniPlayer().open === true`),
+        6000,
+        50
+      );
+
+      const inPipState = await client.eval(`
+        (() => {
+          const mp = window.__retroIdle.getMiniPlayer();
+          const pipWin = mp.getWindow();
+          const pipCanvas = pipWin?.document?.getElementById('screen');
+          const data = pipCanvas.getContext('2d').getImageData(0, 0, pipCanvas.width, pipCanvas.height).data;
+          let first = null;
+          let hasMultipleColors = false;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] === 0) continue;
+            const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+            if (first === null) first = key;
+            else if (key !== first) {
+              hasMultipleColors = true;
+              break;
+            }
+          }
+          const btn = document.getElementById('mini-player-btn');
+          return {
+            screenInPip: pipCanvas.ownerDocument === pipWin.document,
+            screenInMain: Boolean(document.getElementById('screen')),
+            placeholderHidden: document.getElementById('pip-placeholder').hidden,
+            btnActive: btn.classList.contains('active'),
+            btnText: btn.textContent,
+            hasMultipleColors,
+          };
+        })()
+      `);
+      assert.equal(inPipState.screenInPip, true, 'Expected #screen inside PiP window document');
+      assert.equal(inPipState.screenInMain, false, 'Expected #screen moved out of main document');
+      assert.equal(inPipState.placeholderHidden, false, 'Expected #pip-placeholder visible while in Mini-Player');
+      assert.equal(inPipState.btnActive, true, 'Expected #mini-player-btn active while open');
+      assert.equal(inPipState.btnText, 'Exit Mini-Player', 'Expected #mini-player-btn text to update');
+      assert.equal(inPipState.hasMultipleColors, true, 'Expected non-blank canvas inside Mini-Player');
+
+      const pipTicksStart = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+      await sleep(250);
+      const pipTicksEnd = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+      assert.ok(pipTicksEnd > pipTicksStart, 'Expected emulator ticks to advance under PiP requestAnimationFrame');
+
+      // PiP speed button cycles 1x -> 2x and syncs back to main UI; Digit1 in PiP restores 1x
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="speed"]').click()
+      `);
+      const pipSpeed2 = await client.eval(`({
+        speed: window.__retroIdle.getSpeed(),
+        pipBtnText: window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="speed"]').textContent,
+        main2Active: document.querySelector('.speed-btn[data-speed="2"]').classList.contains('active'),
+      })`);
+      assert.equal(pipSpeed2.speed, 2, 'Expected PiP speed button to switch 1x -> 2x');
+      assert.equal(pipSpeed2.pipBtnText, '2x', 'Expected PiP speed button text to update to 2x');
+      assert.equal(pipSpeed2.main2Active, true, 'Expected main 2x button active after PiP speed click');
+
+      await client.eval(`
+        (() => {
+          const w = window.__retroIdle.getMiniPlayer().getWindow();
+          w.dispatchEvent(new w.KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }));
+        })()
+      `);
+      const pipSpeed1 = await client.eval(`({
+        speed: window.__retroIdle.getSpeed(),
+        pipBtnText: window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="speed"]').textContent,
+        main1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+      })`);
+      assert.equal(pipSpeed1.speed, 1, 'Expected Digit1 inside PiP to restore 1x');
+      assert.equal(pipSpeed1.pipBtnText, '1x', 'Expected PiP speed button text to restore 1x');
+      assert.equal(pipSpeed1.main1Active, true, 'Expected main 1x button active after Digit1 in PiP');
+
+      // Keyboard forwarding in PiP (KeyX -> BGP flips 0xE4 -> 0x1B -> 0xE4)
+      await client.eval(`
+        (() => {
+          const w = window.__retroIdle.getMiniPlayer().getWindow();
+          w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'x', code: 'KeyX', bubbles: true, cancelable: true }));
+        })()
+      `);
+      await waitFor(
+        async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0x1b`),
+        5000,
+        30
+      );
+      await client.eval(`
+        (() => {
+          const w = window.__retroIdle.getMiniPlayer().getWindow();
+          w.dispatchEvent(new w.KeyboardEvent('keyup', { key: 'x', code: 'KeyX', bubbles: true, cancelable: true }));
+        })()
+      `);
+      await waitFor(
+        async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`),
+        5000,
+        30
+      );
+
+      // PiP Pause / Resume button + button blur check in pipWin.document
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="toggle-play"]').click()
+      `);
+      await waitFor(
+        async () =>
+          await client.eval(`
+            (() => {
+              const emu = window.__retroIdle.getEmulator();
+              const w = window.__retroIdle.getMiniPlayer().getWindow();
+              const btn = w.document.querySelector('[data-pip-action="toggle-play"]');
+              return emu.isPaused === true && !btn.disabled && btn.textContent === 'Resume';
+            })()
+          `),
+        5000,
+        30
+      );
+      const pipPausedFocusTag = await client.eval(
+        `window.__retroIdle.getMiniPlayer().getWindow().document.activeElement?.tagName`
+      );
+      assert.notEqual(pipPausedFocusTag, 'BUTTON', 'PiP Pause button must blur after click');
+
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="toggle-play"]').click()
+      `);
+      await waitFor(
+        async () =>
+          await client.eval(`
+            (() => {
+              const emu = window.__retroIdle.getEmulator();
+              const w = window.__retroIdle.getMiniPlayer().getWindow();
+              const btn = w.document.querySelector('[data-pip-action="toggle-play"]');
+              return emu.isPlaying === true && !btn.disabled && btn.textContent === 'Pause';
+            })()
+          `),
+        5000,
+        30
+      );
+
+      // Close PiP via pipWin.close() -> tests native pagehide restoration
+      await client.eval(`window.__retroIdle.getMiniPlayer().getWindow().close()`);
+      await waitFor(
+        async () => await client.eval(`window.__retroIdle.getMiniPlayer().open === false`),
+        5000,
+        30
+      );
+
+      const afterPipClose = await client.eval(`({
+        screenBackInSlot: document.getElementById('screen')?.parentElement === document.getElementById('screen-slot'),
+        placeholderHidden: document.getElementById('pip-placeholder').hidden,
+        btnActive: document.getElementById('mini-player-btn').classList.contains('active'),
+        btnText: document.getElementById('mini-player-btn').textContent,
+        playing: window.__retroIdle.getEmulator().isPlaying,
+      })`);
+      assert.equal(afterPipClose.screenBackInSlot, true, 'Expected #screen back in #screen-slot after PiP close');
+      assert.equal(afterPipClose.placeholderHidden, true, 'Expected #pip-placeholder hidden after PiP close');
+      assert.equal(afterPipClose.btnActive, false, 'Expected #mini-player-btn inactive after PiP close');
+      assert.equal(afterPipClose.btnText, 'Mini-Player', 'Expected #mini-player-btn text reset after PiP close');
+      assert.equal(afterPipClose.playing, true, 'Expected emulation still playing after PiP close');
+
+      const mainTicksStart = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+      await sleep(250);
+      const mainTicksEnd = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+      assert.ok(mainTicksEnd > mainTicksStart, 'Expected emulator ticks to keep advancing on main window');
+
+      miniPlayerInfo = {
+        supported: true,
+        pipTicksDelta: pipTicksEnd - pipTicksStart,
+        mainTicksDelta: mainTicksEnd - mainTicksStart,
+      };
+    }
+
     // Capture screenshot
     const shot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
@@ -675,6 +858,7 @@ async function main() {
       resumedStatus,
       resetStatus,
       speedCheck: { ticks1x, ticks4x, ratio: Number((ticks4x / ticks1x).toFixed(2)) },
+      miniPlayerInfo,
       screenshot: SCREENSHOT_PATH,
     });
   } finally {
