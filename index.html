@@ -141,6 +141,8 @@
       <input type="file" id="rom-input" accept=".gb,.gbc,.zip" />
       <button type="button" id="toggle-play" disabled>Pause</button>
       <button type="button" id="reset-btn" disabled>Reset</button>
+      <button type="button" id="save-state-btn" disabled>Save State</button>
+      <button type="button" id="load-state-btn" disabled>Load State</button>
     </div>
 
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
@@ -162,6 +164,8 @@
     const romInput = document.getElementById('rom-input');
     const togglePlayBtn = document.getElementById('toggle-play');
     const resetBtn = document.getElementById('reset-btn');
+    const saveStateBtn = document.getElementById('save-state-btn');
+    const loadStateBtn = document.getElementById('load-state-btn');
     const statusEl = document.getElementById('status');
 
     const CARTRIDGE_TYPES = {
@@ -186,6 +190,7 @@
 
     let currentHeaderText = '';
     let hasLoadedRom = false;
+    let hasManualSave = false;
     let isBusy = false;
 
     function blurActiveElement() {
@@ -194,9 +199,15 @@
       }
     }
 
-    function syncControls(statusSuffix = '') {
+    function setActionButtonsDisabled() {
       togglePlayBtn.disabled = !hasLoadedRom || isBusy;
       resetBtn.disabled = !hasLoadedRom || isBusy;
+      saveStateBtn.disabled = !hasLoadedRom || isBusy;
+      loadStateBtn.disabled = !hasLoadedRom || !hasManualSave || isBusy;
+    }
+
+    function syncControls(statusSuffix = '') {
+      setActionButtonsDisabled();
       if (!hasLoadedRom) {
         togglePlayBtn.textContent = 'Pause';
         return;
@@ -218,14 +229,19 @@
       );
     }
 
+    async function getLatestSaveState(isAuto) {
+      const states = (await WasmBoy.getSaveStates()) || [];
+      return (
+        states
+          .filter((s) => Boolean(s?.isAuto) === isAuto && isValidSaveState(s))
+          .sort((a, b) => (a.date || 0) - (b.date || 0))
+          .at(-1) || null
+      );
+    }
+
     async function restoreLatestAutoSave() {
       try {
-        const states = (await WasmBoy.getSaveStates()) || [];
-        const latestAutoSave = states
-          .filter((s) => s?.isAuto && isValidSaveState(s))
-          .sort((a, b) => (a.date || 0) - (b.date || 0))
-          .at(-1);
-
+        const latestAutoSave = await getLatestSaveState(true);
         if (!latestAutoSave) {
           return false;
         }
@@ -301,6 +317,7 @@
 
         await WasmBoy.loadROM(romSource);
         const restoredAutoSave = await restoreLatestAutoSave();
+        hasManualSave = Boolean(await getLatestSaveState(false).catch(() => null));
         await WasmBoy.play();
 
         const header = await extractHeader(romSource, label);
@@ -315,8 +332,7 @@
         if (hasLoadedRom && !statusEl.textContent.startsWith('Failed')) {
           syncControls(loadStatusSuffix);
         } else {
-          togglePlayBtn.disabled = !hasLoadedRom;
-          resetBtn.disabled = !hasLoadedRom;
+          setActionButtonsDisabled();
         }
         blurActiveElement();
       }
@@ -335,14 +351,23 @@
     async function runTransportAction(action) {
       if (isBusy || !hasLoadedRom) return;
       isBusy = true;
-      togglePlayBtn.disabled = true;
-      resetBtn.disabled = true;
+      setActionButtonsDisabled();
+      let statusSuffix = '';
+      let hadError = false;
       try {
         resumeAudioSafely();
-        await action();
+        statusSuffix = (await action()) || '';
+      } catch (err) {
+        hadError = true;
+        console.error(err);
+        statusEl.textContent = `Action failed: ${err?.message || err}`;
       } finally {
         isBusy = false;
-        syncControls();
+        if (hadError) {
+          setActionButtonsDisabled();
+        } else {
+          syncControls(statusSuffix);
+        }
         blurActiveElement();
       }
     }
@@ -355,6 +380,31 @@
       runTransportAction(async () => {
         await WasmBoy.reset();
         await WasmBoy.play();
+      })
+    );
+
+    saveStateBtn.addEventListener('click', () =>
+      runTransportAction(async () => {
+        const wasPlaying = WasmBoy.isPlaying();
+        await WasmBoy.saveState();
+        hasManualSave = true;
+        if (wasPlaying) {
+          await WasmBoy.play();
+        }
+        return ' — state saved';
+      })
+    );
+
+    loadStateBtn.addEventListener('click', () =>
+      runTransportAction(async () => {
+        const manualSave = await getLatestSaveState(false);
+        if (!manualSave) {
+          hasManualSave = false;
+          return '';
+        }
+        await WasmBoy.loadState(manualSave);
+        await WasmBoy.play();
+        return ' — state loaded';
       })
     );
 
