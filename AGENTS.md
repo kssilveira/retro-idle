@@ -54,9 +54,9 @@
 ## 5. Environment, Testing & Copyright Boundaries
 - **Installed tools:** `node v24.21.0` (has native `fetch` and `WebSocket`), `python3`, `google-chrome` (`158.0.8127.36`). **No `npm` or `npx` is on `PATH`**, so `/browser` Chrome DevTools MCP cannot launch; use `./open-chrome.sh` + a Node 24 CDP WebSocket client on `http://127.0.0.1:9222` to inspect live tabs or run headless verification.
 - **Copyright rule:** **Never** download, search for, link to, or commit copyrighted commercial ROMs, BIOS dumps, or Nintendo assets (keep personal ROMs strictly outside the repo, e.g. `~/Downloads/roms/`).
-- **Outside-repo test suite:** Verification scripts and a legal original 64 KB `MBC3 + RAM + BATTERY` (`0x13`) test ROM with 32 KB SRAM live outside the repo at `/tmp/retro-idle-test/`:
-  - `/tmp/retro-idle-test/make-test-rom.mjs` → generates `/tmp/retro-idle-test/mbc3-test.gb`
-  - `/tmp/retro-idle-test/verify.mjs` → runs end-to-end CDP Chrome checks (MBC3 banking, SRAM, animation, `KeyX` input, `.sav` export/import, 5× Load State, Pause/Save/Load, zero-click `Page.reload()`, Reset, and zero console/log errors). Run with `node /tmp/retro-idle-test/verify.mjs`.
+- **Regression test suite:** End-to-end verification lives in [tests/](tests/), with generated test artifacts written under gitignored `tests/.tmp/` (plus `*.gb`, `*.gbc`, `*.sav` in [.gitignore](.gitignore)):
+  - [tests/make-test-rom.mjs](tests/make-test-rom.mjs) → builds a clean 64 KB `MBC3 + RAM + BATTERY` (`0x13`) test ROM with 32 KB SRAM and a non-copyrighted `0xe06c8834` shift-XOR header check.
+  - [tests/verify.mjs](tests/verify.mjs) → runs end-to-end CDP Chrome checks (MBC3 banking, SRAM, animation, `KeyX` input, `.sav` export/import, 5× Load State, Pause/Save/Load, zero-click `Page.reload()`, Reset, and zero console/log errors). Run with `node tests/verify.mjs`.
 
 ---
 

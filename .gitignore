@@ -1,0 +1,6 @@
+tests/.tmp/
+*.gb
+*.gbc
+*.sav
+node_modules/
+dist/
