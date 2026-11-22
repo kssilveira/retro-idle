@@ -98,6 +98,11 @@
       cursor: not-allowed;
     }
 
+    button.active {
+      border-color: var(--accent);
+      background: #0c4a6e;
+    }
+
     #rom-input,
     #sav-input {
       position: absolute;
@@ -113,6 +118,14 @@
       font-size: 0.875rem;
       color: var(--muted);
       min-height: 1.25em;
+    }
+
+    #auto-fight-status {
+      width: 100%;
+      text-align: center;
+      font-size: 0.825rem;
+      color: var(--accent);
+      min-height: 1.2em;
     }
 
     .legend {
@@ -148,9 +161,11 @@
       <button type="button" id="export-sav-btn" disabled>Export .sav</button>
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
+      <button type="button" id="auto-fight-btn" disabled title="Pokémon Red/Blue only">Auto-Fight</button>
     </div>
 
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
+    <div id="auto-fight-status" hidden></div>
 
     <p class="legend">
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
@@ -164,6 +179,8 @@
 
   <script src="./vendor/binjgb/binjgb.js"></script>
   <script type="module">
+    import { createAutoFight, isPokemonRedBlueTitle, readPokemonRedSnapshot } from './autofight.js';
+
     const SCREEN_WIDTH = 160;
     const SCREEN_HEIGHT = 144;
     const AUDIO_FRAMES = 4096;
@@ -227,6 +244,8 @@
     const exportSavBtn = document.getElementById('export-sav-btn');
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
+    const autoFightBtn = document.getElementById('auto-fight-btn');
+    const autoFightStatusEl = document.getElementById('auto-fight-status');
     const statusEl = document.getElementById('status');
 
     let binjgb;
@@ -240,6 +259,8 @@
     let isBusy = false;
     let sramFlushTimer = 0;
 
+    const autoFight = createAutoFight();
+    let lastAutoFightText = '';
     const heldKeys = new Set();
 
     function getAudioContext() {
@@ -340,9 +361,11 @@
     const dbDelete = (key) => withDb('readwrite', (s) => s.delete(key));
 
     class BinjgbEmulator {
-      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated } = {}) {
+      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated, onFrame } = {}) {
         this.module = module;
         this.onExtRamUpdated = onExtRamUpdated;
+        this.onFrame = onFrame;
+        this.overrideButtons = null;
         this.ctx = canvasEl.getContext('2d');
         this.imageData = this.ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
 
@@ -448,33 +471,43 @@
         return this.module._emulator_read_mem(this.e, addr) & 0xff;
       }
 
-      syncInput() {
-        const next = {
-          up: heldKeys.has('up'),
-          down: heldKeys.has('down'),
-          left: heldKeys.has('left'),
-          right: heldKeys.has('right'),
-          a: heldKeys.has('a'),
-          b: heldKeys.has('b'),
-          start: heldKeys.has('start'),
-          select: heldKeys.has('select'),
-        };
+      setOverrideButtons(btns) {
+        this.overrideButtons = btns;
+        this.syncInput();
+      }
 
-        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-        for (const pad of pads) {
-          if (!pad || !pad.connected) continue;
-          const b = pad.buttons || [];
-          const ax = pad.axes || [];
-          const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
-          next.a ||= pressed(0);
-          next.b ||= pressed(1);
-          next.select ||= pressed(8);
-          next.start ||= pressed(9);
-          next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
-          next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
-          next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
-          next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
-          break;
+      syncInput() {
+        let next;
+        if (this.overrideButtons) {
+          next = { ...this.overrideButtons };
+        } else {
+          next = {
+            up: heldKeys.has('up'),
+            down: heldKeys.has('down'),
+            left: heldKeys.has('left'),
+            right: heldKeys.has('right'),
+            a: heldKeys.has('a'),
+            b: heldKeys.has('b'),
+            start: heldKeys.has('start'),
+            select: heldKeys.has('select'),
+          };
+
+          const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+          for (const pad of pads) {
+            if (!pad || !pad.connected) continue;
+            const b = pad.buttons || [];
+            const ax = pad.axes || [];
+            const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
+            next.a ||= pressed(0);
+            next.b ||= pressed(1);
+            next.select ||= pressed(8);
+            next.start ||= pressed(9);
+            next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
+            next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
+            next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
+            next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
+            break;
+          }
         }
 
         const setters = this.getJoypadSetters();
@@ -536,7 +569,10 @@
 
         while (true) {
           const ev = this.module._emulator_run_until_f64(this.e, untilTicks);
-          if (ev & EVENT_NEW_FRAME) this.renderFrame();
+          if (ev & EVENT_NEW_FRAME) {
+            this.renderFrame();
+            this.onFrame?.();
+          }
           if (ev & EVENT_AUDIO_BUFFER_FULL) this.pushAudio();
           if ((ev & EVENT_UNTIL_TICKS) || ev === 0) break;
         }
@@ -585,6 +621,53 @@
       }
     }
 
+    function setAutoFightStatus(text) {
+      if (text === lastAutoFightText) return;
+      lastAutoFightText = text;
+      autoFightStatusEl.textContent = text;
+      autoFightStatusEl.hidden = !text;
+    }
+
+    function syncAutoFightButton() {
+      const supported = Boolean(emu) && isPokemonRedBlueTitle(currentRomTitle);
+      const active = autoFight.getState().active;
+      autoFightBtn.disabled = !supported || isBusy;
+      autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
+      autoFightBtn.classList.toggle('active', active);
+    }
+
+    function stopAutoFight(reason = null) {
+      autoFight.stop(reason || 'manual');
+      emu?.setOverrideButtons(null);
+      syncAutoFightButton();
+      setAutoFightStatus(reason && reason !== 'manual' ? `Auto-Fight stopped: ${reason}` : '');
+    }
+
+    function stepAutoFight() {
+      if (!emu || !autoFight.getState().active) return;
+      const snap = readPokemonRedSnapshot((a) => emu.readMem(a));
+      const res = autoFight.step(snap);
+      if (!res.active) {
+        stopAutoFight(res.stopReason);
+        return;
+      }
+      emu.setOverrideButtons(res.buttons);
+      setAutoFightStatus(`Auto-Fight: ${res.phase}...`);
+    }
+
+    function startAutoFight() {
+      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      if (emu.isPaused) {
+        emu.resume();
+        syncControls();
+      }
+      const snap = readPokemonRedSnapshot((a) => emu.readMem(a));
+      autoFight.start(snap);
+      syncAutoFightButton();
+      stepAutoFight();
+      blurActiveElement();
+    }
+
     function setActionButtonsDisabled() {
       const loaded = Boolean(emu);
       togglePlayBtn.disabled = !loaded || isBusy;
@@ -594,6 +677,7 @@
       const canUseSav = loaded && emu.sramSize > 0 && !isBusy;
       exportSavBtn.disabled = !canUseSav;
       importSavBtn.disabled = !canUseSav;
+      syncAutoFightButton();
     }
 
     function syncControls(statusSuffix = '') {
@@ -698,6 +782,7 @@
           romBytes = new Uint8Array(await res.arrayBuffer());
         }
 
+        stopAutoFight();
         await flushEmulatorPersistence();
         await consumePendingUnload();
 
@@ -721,6 +806,7 @@
 
         emu = new BinjgbEmulator(binjgb, romBytes, sram, canvas, {
           onExtRamUpdated: scheduleSramFlush,
+          onFrame: stepAutoFight,
         });
 
         if (autoState && emu.loadState(autoState)) {
@@ -782,6 +868,7 @@
     togglePlayBtn.addEventListener('click', () =>
       runTransportAction(async () => {
         if (emu.isPlaying) {
+          stopAutoFight();
           emu.pause();
           await flushEmulatorPersistence();
         } else {
@@ -791,6 +878,7 @@
     );
 
     async function rebootWithSram(sramBytes) {
+      stopAutoFight();
       clearTimeout(sramFlushTimer);
       if (sramBytes) await dbPut(`sram:${currentRomId}`, sramBytes);
       await dbDelete(`autoState:${currentRomId}`);
@@ -798,6 +886,7 @@
       emu.destroy();
       emu = new BinjgbEmulator(binjgb, currentRomBytes, sramBytes, canvas, {
         onExtRamUpdated: scheduleSramFlush,
+        onFrame: stepAutoFight,
       });
       emu.resume();
     }
@@ -819,6 +908,7 @@
 
     loadStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
+        stopAutoFight();
         const state = await dbGet(`manualState:${currentRomId}`);
         if (!state || !emu.loadState(state)) {
           hasManualSave = false;
@@ -828,6 +918,17 @@
         return ' — state loaded';
       })
     );
+
+    autoFightBtn.addEventListener('click', () => {
+      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      resumeAudioSafely();
+      if (autoFight.getState().active) {
+        stopAutoFight('manual');
+      } else {
+        startAutoFight();
+      }
+      blurActiveElement();
+    });
 
     exportSavBtn.addEventListener('click', () =>
       runTransportAction(async () => {
@@ -876,6 +977,11 @@
 
     window.addEventListener('keydown', (e) => {
       resumeAudioSafely();
+      if (e.code === 'Escape' && autoFight.getState().active) {
+        stopAutoFight('manual');
+        e.preventDefault();
+        return;
+      }
       const btn = KEY_MAP[e.code];
       if (!btn || e.ctrlKey || e.altKey || e.metaKey) return;
       if (document.activeElement && INPUT_TAGS.has(document.activeElement.tagName)) return;
@@ -895,6 +1001,9 @@
     window.addEventListener('beforeunload', writeUnloadSnapshot);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        if (autoFight.getState().active) {
+          stopAutoFight();
+        }
         writeUnloadSnapshot();
         if (emu && emu.isPlaying && !isBusy) {
           emu.pause();
@@ -944,7 +1053,16 @@
       });
     }
 
-    window.__retroIdle = { getEmulator: () => emu, loadRom };
+    window.__retroIdle = {
+      getEmulator: () => emu,
+      loadRom,
+      getAutoFight: () => ({
+        ...autoFight.getState(),
+        start: startAutoFight,
+        stop: stopAutoFight,
+        snapshot: () => (emu ? readPokemonRedSnapshot((a) => emu.readMem(a)) : null),
+      }),
+    };
   </script>
 </body>
 </html>
