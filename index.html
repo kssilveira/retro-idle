@@ -139,8 +139,8 @@
     <canvas id="screen" width="160" height="144"></canvas>
 
     <div class="controls">
-      <label class="file-label" for="rom-input">Load ROM (.gb / .gbc / .zip)</label>
-      <input type="file" id="rom-input" accept=".gb,.gbc,.zip" />
+      <label class="file-label" for="rom-input">Load ROM (.gb / .gbc)</label>
+      <input type="file" id="rom-input" accept=".gb,.gbc" />
       <button type="button" id="toggle-play" disabled>Pause</button>
       <button type="button" id="reset-btn" disabled>Reset</button>
       <button type="button" id="save-state-btn" disabled>Save State</button>
@@ -162,133 +162,22 @@
     </p>
   </main>
 
+  <script src="./vendor/binjgb/binjgb.js"></script>
   <script type="module">
-    const WASMBOY_URL = 'https://cdn.jsdelivr.net/npm/wasmboy@0.7.1/dist/wasmboy.wasm.esm.js';
+    const SCREEN_WIDTH = 160;
+    const SCREEN_HEIGHT = 144;
+    const AUDIO_FRAMES = 4096;
+    const AUDIO_LATENCY_SEC = 0.1;
+    const MAX_UPDATE_SEC = 5 / 60;
+    const CPU_TICKS_PER_SECOND = 4194304;
+    const EVENT_NEW_FRAME = 1;
+    const EVENT_AUDIO_BUFFER_FULL = 2;
+    const EVENT_UNTIL_TICKS = 4;
 
-    const canvas = document.getElementById('screen');
-    const romInput = document.getElementById('rom-input');
-    const togglePlayBtn = document.getElementById('toggle-play');
-    const resetBtn = document.getElementById('reset-btn');
-    const saveStateBtn = document.getElementById('save-state-btn');
-    const loadStateBtn = document.getElementById('load-state-btn');
-    const exportSavBtn = document.getElementById('export-sav-btn');
-    const importSavBtn = document.getElementById('import-sav-btn');
-    const savInput = document.getElementById('sav-input');
-    const statusEl = document.getElementById('status');
-
-    function base64ToBytes(b64) {
-      return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    }
-
-    function bytesToBase64(bytes) {
-      const chunks = [];
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        chunks.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
-      }
-      return btoa(chunks.join(''));
-    }
-
-    function findUniqueSubarray(haystack, needle) {
-      let matchIdx = -1;
-      for (let i = 0; i <= haystack.length - needle.length; i++) {
-        let matched = true;
-        for (let j = 0; j < needle.length; j++) {
-          if (haystack[i + j] !== needle[j]) {
-            matched = false;
-            break;
-          }
-        }
-        if (matched) {
-          if (matchIdx !== -1) {
-            throw new Error('Ambiguous WasmBoy patch target');
-          }
-          matchIdx = i;
-        }
-      }
-      if (matchIdx === -1) {
-        throw new Error('Could not locate WasmBoy patch target');
-      }
-      return matchIdx;
-    }
-
-    async function loadPatchedWasmBoy() {
-      const res = await fetch(WASMBOY_URL);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch WasmBoy (${res.status})`);
-      }
-      let source = await res.text();
-
-      const workerUrls = source.match(/data:application\/javascript;base64,[A-Za-z0-9+/=]+/g) || [];
-      let patchedWorker = false;
-
-      for (const workerUrl of workerUrls) {
-        const prefix = 'data:application/javascript;base64,';
-        let workerJs = atob(workerUrl.slice(prefix.length));
-        const wasmMatch = workerJs.match(/data:application\/wasm;base64,([A-Za-z0-9+/=]+)/);
-        if (!wasmMatch) continue;
-
-        const wasmBytes = base64ToBytes(wasmMatch[1]);
-        // Fix 5 upstream wasmboy@0.7.1 loadState() slot typos (passing variable instead of saveStateSlot)
-        const wasmPatches = [
-          { expected: [0x23, 0x49, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x07] },
-          { expected: [0x23, 0x63, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x08] },
-          { expected: [0x23, 0xea, 0x01, 0x41, 0x32, 0x6c, 0x41, 0x84, 0x08, 0x6a], replace: [0x41, 0x01, 0x01] },
-          { expected: [0x23, 0x76, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x09] },
-          { expected: [0x23, 0x85, 0x01, 0x41, 0x32, 0x6c, 0x41, 0x80, 0x08, 0x6a], replace: [0x41, 0x0a, 0x01] },
-        ];
-        for (const p of wasmPatches) {
-          const idx = findUniqueSubarray(wasmBytes, p.expected);
-          wasmBytes.set(p.replace, idx);
-        }
-        if (!WebAssembly.validate(wasmBytes)) {
-          throw new Error('Patched WasmBoy WASM core failed validation');
-        }
-
-        workerJs = workerJs.replace(wasmMatch[0], `data:application/wasm;base64,${bytesToBase64(wasmBytes)}`);
-        source = source.replace(workerUrl, `${prefix}${btoa(workerJs)}`);
-        patchedWorker = true;
-        break;
-      }
-
-      if (!patchedWorker) {
-        throw new Error('Could not locate WasmBoy WASM worker');
-      }
-
-      // Wrap raw ArrayBuffers returned by GET_MEMORY after loadState() in Uint8Array
-      const loadStateAssignTarget =
-        'this.cartridgeRam=a.message[u.CARTRIDGE_RAM];this.gameboyMemory=a.message[u.GAMEBOY_MEMORY];this.paletteMemory=a.message[u.PALETTE_MEMORY];this.internalState=a.message[u.INTERNAL_STATE]';
-      const loadStateAssignFixed =
-        'this.cartridgeRam=new Uint8Array(a.message[u.CARTRIDGE_RAM]);this.gameboyMemory=new Uint8Array(a.message[u.GAMEBOY_MEMORY]);this.paletteMemory=new Uint8Array(a.message[u.PALETTE_MEMORY]);this.internalState=new Uint8Array(a.message[u.INTERNAL_STATE])';
-      if (!source.includes(loadStateAssignTarget)) {
-        throw new Error('Could not locate WasmBoy loadState memory assignment');
-      }
-      source = source.replace(loadStateAssignTarget, loadStateAssignFixed);
-
-      const cartridgeInfoTarget = '_getCartridgeInfo:N.getCartridgeInfo.bind(N)';
-      const cartridgeInfoFixed =
-        '_getCartridgeInfo:N.getCartridgeInfo.bind(N),_saveCartridgeRam:N.saveCartridgeRam.bind(N),_loadCartridgeRam:N.loadCartridgeRam.bind(N)';
-      if (!source.includes(cartridgeInfoTarget)) {
-        throw new Error('Could not locate WasmBoy cartridge info export');
-      }
-      source = source.replace(cartridgeInfoTarget, cartridgeInfoFixed);
-
-      const blobUrl = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
-      try {
-        const mod = await import(blobUrl);
-        return mod.WasmBoy;
-      } finally {
-        URL.revokeObjectURL(blobUrl);
-      }
-    }
-
-    let WasmBoy;
-    try {
-      WasmBoy = await loadPatchedWasmBoy();
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = `Failed to initialize emulator: ${err?.message || err}`;
-      throw err;
-    }
+    const DB_NAME = 'retro-idle';
+    const STORE_NAME = 'kv';
+    const LAST_ROM_KEY = 'lastRom';
+    const UNLOAD_KEY = 'retro-idle:unload';
 
     const CARTRIDGE_TYPES = {
       0x00: 'ROM ONLY',
@@ -310,12 +199,63 @@
       0x1e: 'MBC5 + RUMBLE + RAM + BATTERY',
     };
 
-    let currentHeaderText = '';
+    const KEY_MAP = {
+      ArrowUp: 'up',
+      KeyW: 'up',
+      ArrowDown: 'down',
+      KeyS: 'down',
+      ArrowLeft: 'left',
+      KeyA: 'left',
+      ArrowRight: 'right',
+      KeyD: 'right',
+      KeyX: 'a',
+      KeyZ: 'b',
+      Enter: 'start',
+      ShiftLeft: 'select',
+      ShiftRight: 'select',
+      Tab: 'select',
+    };
+
+    const INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'BUTTON']);
+
+    const canvas = document.getElementById('screen');
+    const romInput = document.getElementById('rom-input');
+    const togglePlayBtn = document.getElementById('toggle-play');
+    const resetBtn = document.getElementById('reset-btn');
+    const saveStateBtn = document.getElementById('save-state-btn');
+    const loadStateBtn = document.getElementById('load-state-btn');
+    const exportSavBtn = document.getElementById('export-sav-btn');
+    const importSavBtn = document.getElementById('import-sav-btn');
+    const savInput = document.getElementById('sav-input');
+    const statusEl = document.getElementById('status');
+
+    let binjgb;
+    let audioCtx = null;
+    let emu = null;
+    let currentRomBytes = null;
+    let currentRomId = '';
     let currentRomTitle = '';
-    let currentSramSize = 0;
-    let hasLoadedRom = false;
+    let currentHeaderText = '';
     let hasManualSave = false;
     let isBusy = false;
+    let sramFlushTimer = 0;
+
+    const heldKeys = new Set();
+
+    function getAudioContext() {
+      if (!audioCtx) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (Ctor) audioCtx = new Ctor();
+      }
+      return audioCtx;
+    }
+
+    function resumeAudioSafely() {
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    }
 
     function blurActiveElement() {
       if (document.activeElement instanceof HTMLElement) {
@@ -323,120 +263,50 @@
       }
     }
 
-    function setActionButtonsDisabled() {
-      togglePlayBtn.disabled = !hasLoadedRom || isBusy;
-      resetBtn.disabled = !hasLoadedRom || isBusy;
-      saveStateBtn.disabled = !hasLoadedRom || isBusy;
-      loadStateBtn.disabled = !hasLoadedRom || !hasManualSave || isBusy;
-      const canUseSav = hasLoadedRom && currentSramSize > 0 && !isBusy;
-      exportSavBtn.disabled = !canUseSav;
-      importSavBtn.disabled = !canUseSav;
-    }
-
-    function syncControls(statusSuffix = '') {
-      setActionButtonsDisabled();
-      if (!hasLoadedRom) {
-        togglePlayBtn.textContent = 'Pause';
-        return;
+    function bytesToBase64(bytes) {
+      const chunks = [];
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        chunks.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
       }
-      const playing = WasmBoy.isPlaying();
-      togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
-      statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}${statusSuffix}`;
+      return btoa(chunks.join(''));
     }
 
-    function isValidSaveState(state) {
-      const mem = state?.wasmboyMemory;
-      return Boolean(
-        mem &&
-        mem.cartridgeRam?.buffer &&
-        mem.gameBoyMemory?.buffer &&
-        mem.wasmBoyPaletteMemory?.buffer &&
-        mem.wasmBoyInternalState?.buffer &&
-        mem.wasmBoyInternalState.byteLength > 0
-      );
+    function base64ToBytes(b64) {
+      return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     }
 
-    async function getLatestSaveState(isAuto) {
-      const states = (await WasmBoy.getSaveStates()) || [];
-      return (
-        states
-          .filter((s) => Boolean(s?.isAuto) === isAuto && isValidSaveState(s))
-          .sort((a, b) => (a.date || 0) - (b.date || 0))
-          .at(-1) || null
-      );
+    const CRC_TABLE = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      CRC_TABLE[i] = c >>> 0;
+    }
+    function crc32Hex(bytes) {
+      let crc = 0xffffffff;
+      for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+      return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
     }
 
-    async function restoreLatestAutoSave() {
-      try {
-        const latestAutoSave = await getLatestSaveState(true);
-        if (!latestAutoSave) {
-          return false;
-        }
-
-        await WasmBoy.loadState(latestAutoSave);
-        return true;
-      } catch (err) {
-        console.warn('Could not restore auto-save state:', err);
-        return false;
-      }
-    }
-
-    const SRAM_SIZES = {
-      0x01: 0x0800,
-      0x02: 0x2000,
-      0x03: 0x8000,
-      0x04: 0x20000,
-      0x05: 0x10000,
-    };
-
-    function getCartridgeSramSize(typeCode, ramSizeCode) {
-      if (typeCode === 0x00) return 0;
-      if (SRAM_SIZES[ramSizeCode]) return SRAM_SIZES[ramSizeCode];
-      if (typeCode === 0x05 || typeCode === 0x06) return 0x0800;
-      return 0;
-    }
-
-    function parseRomHeader(bytes, baseOffset = 0x0134) {
-      if (!bytes || bytes.length < baseOffset + 0x1c) {
-        return null;
-      }
+    function parseRomHeader(bytes) {
+      if (!bytes || bytes.length < 0x0150) return null;
       let title = '';
-      for (let i = baseOffset; i <= baseOffset + 0x0e; i++) {
+      for (let i = 0x0134; i <= 0x0142; i++) {
         const ch = bytes[i];
         if (ch === 0) break;
-        if (ch >= 0x20 && ch <= 0x7e) {
-          title += String.fromCharCode(ch);
-        }
+        if (ch >= 0x20 && ch <= 0x7e) title += String.fromCharCode(ch);
       }
       title = title.trim() || 'UNKNOWN';
-      const typeCode = bytes[baseOffset + 0x13];
-      const ramSizeCode = bytes[baseOffset + 0x15];
-      const sramSize = getCartridgeSramSize(typeCode, ramSizeCode);
+      const typeCode = bytes[0x0147];
       const mbc = CARTRIDGE_TYPES[typeCode] || `TYPE 0x${typeCode.toString(16).padStart(2, '0').toUpperCase()}`;
-      return { title, mbc, typeCode, ramSizeCode, sramSize };
+      return { title, mbc, typeCode };
     }
 
-    function resumeAudioSafely() {
-      try {
-        const result = WasmBoy.resumeAudioContext();
-        if (result && typeof result.catch === 'function') {
-          result.catch(() => {});
-        }
-      } catch {
-        // Ignore audio context autoplay restrictions until user gesture
-      }
-    }
-
-    const ROM_DB_NAME = 'retro-idle';
-    const ROM_STORE_NAME = 'kv';
-    const LAST_ROM_KEY = 'lastRom';
-
-    function openRomDb() {
+    function openDb() {
       return new Promise((resolve, reject) => {
-        const req = indexedDB.open(ROM_DB_NAME, 1);
+        const req = indexedDB.open(DB_NAME, 1);
         req.onupgradeneeded = () => {
-          if (!req.result.objectStoreNames.contains(ROM_STORE_NAME)) {
-            req.result.createObjectStore(ROM_STORE_NAME);
+          if (!req.result.objectStoreNames.contains(STORE_NAME)) {
+            req.result.createObjectStore(STORE_NAME);
           }
         };
         req.onsuccess = () => resolve(req.result);
@@ -444,44 +314,362 @@
       });
     }
 
-    async function saveLastRom(blob, name) {
+    async function withDb(mode, fn, fallback = null) {
       let db;
       try {
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        db = await openRomDb();
-        await new Promise((resolve, reject) => {
-          const tx = db.transaction(ROM_STORE_NAME, 'readwrite');
-          tx.objectStore(ROM_STORE_NAME).put({ bytes, name, savedAt: Date.now() }, LAST_ROM_KEY);
-          tx.oncomplete = () => resolve();
+        db = await openDb();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, mode);
+          let result;
+          const req = fn(tx.objectStore(STORE_NAME));
+          if (req) req.onsuccess = () => { result = req.result; };
+          tx.oncomplete = () => resolve(result ?? null);
           tx.onerror = () => reject(tx.error);
           tx.onabort = () => reject(tx.error);
         });
       } catch (err) {
-        console.warn('Could not persist last ROM:', err);
+        console.warn('IndexedDB error:', err);
+        return fallback;
       } finally {
         db?.close();
       }
     }
 
-    async function loadLastRom() {
-      let db;
-      try {
-        db = await openRomDb();
-        const record = await new Promise((resolve, reject) => {
-          const tx = db.transaction(ROM_STORE_NAME, 'readonly');
-          const req = tx.objectStore(ROM_STORE_NAME).get(LAST_ROM_KEY);
-          req.onsuccess = () => resolve(req.result || null);
-          req.onerror = () => reject(req.error);
-        });
-        if (!record?.bytes || !record?.name) {
-          return null;
+    const dbGet = (key) => withDb('readonly', (s) => s.get(key));
+    const dbPut = (key, value) => withDb('readwrite', (s) => s.put(value, key));
+    const dbDelete = (key) => withDb('readwrite', (s) => s.delete(key));
+
+    class BinjgbEmulator {
+      constructor(module, romBytes, extRamBytes, canvasEl, { onExtRamUpdated } = {}) {
+        this.module = module;
+        this.onExtRamUpdated = onExtRamUpdated;
+        this.ctx = canvasEl.getContext('2d');
+        this.imageData = this.ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+        const alignedSize = (romBytes.byteLength + 0x7fff) & ~0x7fff;
+        this.romPtr = module._malloc(alignedSize);
+        new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).fill(0);
+        new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).set(romBytes);
+
+        const sampleRate = getAudioContext()?.sampleRate || 44100;
+        this.e = module._emulator_new_simple(this.romPtr, alignedSize, sampleRate, AUDIO_FRAMES, 2);
+        if (this.e === 0) {
+          module._free(this.romPtr);
+          this.romPtr = 0;
+          throw new Error('Invalid ROM');
         }
-        return new File([record.bytes], record.name);
+
+        this.joypadPtr = module._joypad_new();
+        module._emulator_set_default_joypad_callback(this.e, this.joypadPtr);
+
+        this.sramSize = this.withFileData(module._ext_ram_file_data_new(this.e), (_, buf) => buf.byteLength);
+        if (extRamBytes && this.sramSize > 0) {
+          this.loadExtRam(extRamBytes);
+        }
+
+        this.rafId = 0;
+        this.lastSec = 0;
+        this.leftoverTicks = 0;
+        this.audioStartSec = 0;
+        this.destroyed = false;
+        this.lastButtons = {};
+        for (const [k, fn] of Object.entries(this.getJoypadSetters())) {
+          this.lastButtons[k] = false;
+          fn(this.e, 0);
+        }
+      }
+
+      getJoypadSetters() {
+        return {
+          up: this.module._set_joyp_up,
+          down: this.module._set_joyp_down,
+          left: this.module._set_joyp_left,
+          right: this.module._set_joyp_right,
+          a: this.module._set_joyp_A,
+          b: this.module._set_joyp_B,
+          start: this.module._set_joyp_start,
+          select: this.module._set_joyp_select,
+        };
+      }
+
+      get isPaused() {
+        return this.rafId === 0;
+      }
+
+      get isPlaying() {
+        return !this.destroyed && this.rafId !== 0;
+      }
+
+      withFileData(fileDataPtr, fn) {
+        const ptr = this.module._get_file_data_ptr(fileDataPtr);
+        const size = this.module._get_file_data_size(fileDataPtr);
+        try {
+          return fn(fileDataPtr, new Uint8Array(this.module.HEAP8.buffer, ptr, size));
+        } finally {
+          this.module._file_data_delete(fileDataPtr);
+          this.module._free(fileDataPtr);
+        }
+      }
+
+      getSaveState() {
+        return this.withFileData(this.module._state_file_data_new(this.e), (ptr, buf) => {
+          this.module._emulator_write_state(this.e, ptr);
+          return new Uint8Array(buf);
+        });
+      }
+
+      loadState(stateBytes) {
+        return this.withFileData(this.module._state_file_data_new(this.e), (ptr, buf) => {
+          if (!stateBytes || buf.byteLength !== stateBytes.byteLength) return false;
+          buf.set(stateBytes);
+          this.module._emulator_read_state(this.e, ptr);
+          return true;
+        });
+      }
+
+      getExtRam() {
+        if (this.sramSize === 0) return new Uint8Array();
+        return this.withFileData(this.module._ext_ram_file_data_new(this.e), (ptr, buf) => {
+          this.module._emulator_write_ext_ram(this.e, ptr);
+          return new Uint8Array(buf);
+        });
+      }
+
+      loadExtRam(ramBytes) {
+        if (this.sramSize === 0 || !ramBytes) return;
+        this.withFileData(this.module._ext_ram_file_data_new(this.e), (ptr, buf) => {
+          buf.fill(0);
+          buf.set(ramBytes.subarray(0, buf.byteLength));
+          this.module._emulator_read_ext_ram(this.e, ptr);
+        });
+      }
+
+      readMem(addr) {
+        return this.module._emulator_read_mem(this.e, addr) & 0xff;
+      }
+
+      syncInput() {
+        const next = {
+          up: heldKeys.has('up'),
+          down: heldKeys.has('down'),
+          left: heldKeys.has('left'),
+          right: heldKeys.has('right'),
+          a: heldKeys.has('a'),
+          b: heldKeys.has('b'),
+          start: heldKeys.has('start'),
+          select: heldKeys.has('select'),
+        };
+
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (const pad of pads) {
+          if (!pad || !pad.connected) continue;
+          const b = pad.buttons || [];
+          const ax = pad.axes || [];
+          const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
+          next.a ||= pressed(0);
+          next.b ||= pressed(1);
+          next.select ||= pressed(8);
+          next.start ||= pressed(9);
+          next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
+          next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
+          next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
+          next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
+          break;
+        }
+
+        const setters = this.getJoypadSetters();
+        for (const k of Object.keys(next)) {
+          if (next[k] !== this.lastButtons[k]) {
+            this.lastButtons[k] = next[k];
+            setters[k](this.e, next[k] ? 1 : 0);
+          }
+        }
+      }
+
+      pushAudio() {
+        const ctx = getAudioContext();
+        if (!ctx || ctx.state !== 'running') return;
+        const ptr = this.module._get_audio_buffer_ptr(this.e);
+        const cap = this.module._get_audio_buffer_capacity(this.e);
+        const samples = new Uint8Array(this.module.HEAP8.buffer, ptr, cap);
+        const nowSec = ctx.currentTime;
+        const nowPlusLatency = nowSec + AUDIO_LATENCY_SEC;
+        this.audioStartSec = this.audioStartSec || nowPlusLatency;
+        if (this.audioStartSec >= nowSec) {
+          const buffer = ctx.createBuffer(2, AUDIO_FRAMES, ctx.sampleRate);
+          const ch0 = buffer.getChannelData(0);
+          const ch1 = buffer.getChannelData(1);
+          for (let i = 0; i < AUDIO_FRAMES; i++) {
+            ch0[i] = (samples[2 * i] * 0.5) / 255;
+            ch1[i] = (samples[2 * i + 1] * 0.5) / 255;
+          }
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(ctx.destination);
+          src.start(this.audioStartSec);
+          this.audioStartSec += AUDIO_FRAMES / ctx.sampleRate;
+        } else {
+          this.audioStartSec = nowPlusLatency;
+        }
+      }
+
+      renderFrame() {
+        const ptr = this.module._get_frame_buffer_ptr(this.e);
+        const size = this.module._get_frame_buffer_size(this.e);
+        const fb = new Uint8Array(this.module.HEAP8.buffer, ptr, size);
+        this.imageData.data.set(fb);
+        this.ctx.putImageData(this.imageData, 0, 0);
+      }
+
+      stepFrame = (ms) => {
+        if (this.destroyed || this.rafId === 0) return;
+        this.rafId = requestAnimationFrame(this.stepFrame);
+        this.syncInput();
+
+        const sec = ms / 1000;
+        const deltaSec = Math.max(sec - (this.lastSec || sec), 0);
+        this.lastSec = sec;
+
+        const startTicks = this.module._emulator_get_ticks_f64(this.e);
+        const deltaTicks = Math.min(deltaSec, MAX_UPDATE_SEC) * CPU_TICKS_PER_SECOND;
+        const untilTicks = startTicks + deltaTicks - this.leftoverTicks;
+
+        while (true) {
+          const ev = this.module._emulator_run_until_f64(this.e, untilTicks);
+          if (ev & EVENT_NEW_FRAME) this.renderFrame();
+          if (ev & EVENT_AUDIO_BUFFER_FULL) this.pushAudio();
+          if ((ev & EVENT_UNTIL_TICKS) || ev === 0) break;
+        }
+        this.leftoverTicks = (this.module._emulator_get_ticks_f64(this.e) - untilTicks) | 0;
+
+        if (this.module._emulator_was_ext_ram_updated(this.e)) {
+          this.onExtRamUpdated?.();
+        }
+      };
+
+      resume() {
+        if (this.destroyed || this.rafId !== 0) return;
+        this.lastSec = 0;
+        this.audioStartSec = 0;
+        resumeAudioSafely();
+        this.rafId = requestAnimationFrame(this.stepFrame);
+      }
+
+      pause() {
+        if (this.rafId !== 0) {
+          cancelAnimationFrame(this.rafId);
+          this.rafId = 0;
+        }
+        this.audioStartSec = 0;
+        if (audioCtx && audioCtx.state === 'running') {
+          audioCtx.suspend().catch(() => {});
+        }
+      }
+
+      destroy() {
+        if (this.destroyed) return;
+        this.pause();
+        this.destroyed = true;
+        if (this.e) {
+          this.module._emulator_delete(this.e);
+          this.e = 0;
+        }
+        if (this.joypadPtr) {
+          this.module._joypad_delete(this.joypadPtr);
+          this.joypadPtr = 0;
+        }
+        if (this.romPtr) {
+          this.module._free(this.romPtr);
+          this.romPtr = 0;
+        }
+      }
+    }
+
+    function setActionButtonsDisabled() {
+      const loaded = Boolean(emu);
+      togglePlayBtn.disabled = !loaded || isBusy;
+      resetBtn.disabled = !loaded || isBusy;
+      saveStateBtn.disabled = !loaded || isBusy;
+      loadStateBtn.disabled = !loaded || !hasManualSave || isBusy;
+      const canUseSav = loaded && emu.sramSize > 0 && !isBusy;
+      exportSavBtn.disabled = !canUseSav;
+      importSavBtn.disabled = !canUseSav;
+    }
+
+    function syncControls(statusSuffix = '') {
+      setActionButtonsDisabled();
+      if (!emu) {
+        togglePlayBtn.textContent = 'Pause';
+        return;
+      }
+      const playing = emu.isPlaying;
+      togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
+      statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}${statusSuffix}`;
+    }
+
+    function scheduleSramFlush() {
+      if (!emu || !currentRomId || emu.sramSize === 0) return;
+      clearTimeout(sramFlushTimer);
+      sramFlushTimer = setTimeout(() => {
+        if (emu && currentRomId && emu.sramSize > 0) {
+          dbPut(`sram:${currentRomId}`, emu.getExtRam());
+        }
+      }, 500);
+    }
+
+    async function flushEmulatorPersistence() {
+      if (!emu || !currentRomId) return;
+      clearTimeout(sramFlushTimer);
+      const writes = [dbPut(`autoState:${currentRomId}`, emu.getSaveState())];
+      if (emu.sramSize > 0) {
+        writes.push(dbPut(`sram:${currentRomId}`, emu.getExtRam()));
+      }
+      await Promise.all(writes);
+    }
+
+    function writeUnloadSnapshot() {
+      if (!emu || !currentRomId) return;
+      try {
+        const sram = emu.sramSize > 0 ? emu.getExtRam() : new Uint8Array();
+        localStorage.setItem(
+          UNLOAD_KEY,
+          JSON.stringify({
+            romId: currentRomId,
+            state: bytesToBase64(emu.getSaveState()),
+            sram: sram.length ? bytesToBase64(sram) : '',
+          })
+        );
       } catch (err) {
-        console.warn('Could not load saved ROM:', err);
-        return null;
-      } finally {
-        db?.close();
+        console.warn('Could not write unload snapshot:', err);
+      }
+    }
+
+    function clearPendingUnloadFor(romId) {
+      try {
+        const raw = localStorage.getItem(UNLOAD_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed?.romId === romId) {
+          localStorage.removeItem(UNLOAD_KEY);
+        }
+      } catch {
+        localStorage.removeItem(UNLOAD_KEY);
+      }
+    }
+
+    async function consumePendingUnload() {
+      try {
+        const raw = localStorage.getItem(UNLOAD_KEY);
+        if (!raw) return;
+        localStorage.removeItem(UNLOAD_KEY);
+        const parsed = JSON.parse(raw);
+        if (!parsed?.romId || !parsed?.state) return;
+        await dbPut(`autoState:${parsed.romId}`, base64ToBytes(parsed.state));
+        if (parsed.sram) {
+          await dbPut(`sram:${parsed.romId}`, base64ToBytes(parsed.sram));
+        }
+      } catch (err) {
+        console.warn('Could not restore pending unload snapshot:', err);
       }
     }
 
@@ -490,50 +678,65 @@
       const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
       let loadStatusSuffix = '';
       isBusy = true;
-      syncControls();
+      setActionButtonsDisabled();
       statusEl.textContent = `Loading ${label}...`;
 
       try {
         resumeAudioSafely();
-        await WasmBoy.config(
-          {
-            headless: false,
-            isAudioEnabled: true,
-            isGbcEnabled: true,
-            isGbcColorizationEnabled: true,
-            enableBootROMIfAvailable: false,
-            onPause: () => {
-              if (hasLoadedRom && !isBusy) syncControls();
-            },
-            onPlay: () => {
-              if (hasLoadedRom && !isBusy) syncControls();
-            },
-          },
-          canvas
-        );
-
-        await WasmBoy.loadROM(romSource);
-        if (persist && romSource instanceof Blob) {
-          await saveLastRom(romSource, label);
+        if (String(label).toLowerCase().endsWith('.zip')) {
+          throw new Error('Please unzip the .gb / .gbc file first');
         }
-        const restoredAutoSave = await restoreLatestAutoSave();
-        hasManualSave = Boolean(await getLatestSaveState(false).catch(() => null));
-        await WasmBoy.play();
 
-        const romLoc = await WasmBoy._getWasmConstant('CARTRIDGE_ROM_LOCATION');
-        const headerSlice = await WasmBoy._getWasmMemorySection(romLoc + 0x0134, romLoc + 0x0150);
-        const header = parseRomHeader(headerSlice, 0);
+        let romBytes;
+        if (romSource instanceof Uint8Array) {
+          romBytes = romSource;
+        } else if (romSource instanceof Blob) {
+          romBytes = new Uint8Array(await romSource.arrayBuffer());
+        } else {
+          const res = await fetch(romSource);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          romBytes = new Uint8Array(await res.arrayBuffer());
+        }
+
+        await flushEmulatorPersistence();
+        await consumePendingUnload();
+
+        if (emu) {
+          emu.destroy();
+          emu = null;
+        }
+
+        const header = parseRomHeader(romBytes);
+        currentRomBytes = romBytes;
+        currentRomId = crc32Hex(romBytes);
         currentRomTitle = header ? header.title : label;
-        currentSramSize = header ? header.sramSize : 0;
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
-        loadStatusSuffix = restoredAutoSave ? ' — resumed auto-save' : '';
-        hasLoadedRom = true;
+
+        const [sram, autoState, manualState] = await Promise.all([
+          dbGet(`sram:${currentRomId}`),
+          dbGet(`autoState:${currentRomId}`),
+          dbGet(`manualState:${currentRomId}`),
+        ]);
+        hasManualSave = Boolean(manualState);
+
+        emu = new BinjgbEmulator(binjgb, romBytes, sram, canvas, {
+          onExtRamUpdated: scheduleSramFlush,
+        });
+
+        if (autoState && emu.loadState(autoState)) {
+          loadStatusSuffix = ' — resumed auto-save';
+        }
+        emu.resume();
+
+        if (persist) {
+          await dbPut(LAST_ROM_KEY, { bytes: romBytes, name: label, savedAt: Date.now() });
+        }
       } catch (err) {
         console.error(err);
         statusEl.textContent = `Failed to load ROM: ${err?.message || err}`;
       } finally {
         isBusy = false;
-        if (hasLoadedRom && !statusEl.textContent.startsWith('Failed')) {
+        if (emu && !statusEl.textContent.startsWith('Failed')) {
           syncControls(loadStatusSuffix);
         } else {
           setActionButtonsDisabled();
@@ -542,18 +745,8 @@
       }
     }
 
-    romInput.addEventListener('change', async () => {
-      const file = romInput.files && romInput.files[0];
-      romInput.value = '';
-      if (file) {
-        await loadRom(file, file.name, { persist: true });
-      } else {
-        blurActiveElement();
-      }
-    });
-
     async function runTransportAction(action) {
-      if (isBusy || !hasLoadedRom) return;
+      if (isBusy || !emu) return;
       isBusy = true;
       setActionButtonsDisabled();
       let statusSuffix = '';
@@ -564,7 +757,7 @@
       } catch (err) {
         hadError = true;
         console.error(err);
-        statusEl.textContent = `Action failed: ${err?.message || err || 'emulator worker timed out'}`;
+        statusEl.textContent = `Action failed: ${err?.message || err}`;
       } finally {
         isBusy = false;
         if (hadError) {
@@ -576,49 +769,72 @@
       }
     }
 
+    romInput.addEventListener('change', async () => {
+      const file = romInput.files?.[0];
+      romInput.value = '';
+      if (file) {
+        await loadRom(file, file.name, { persist: true });
+      } else {
+        blurActiveElement();
+      }
+    });
+
     togglePlayBtn.addEventListener('click', () =>
-      runTransportAction(() => (WasmBoy.isPlaying() ? WasmBoy.pause() : WasmBoy.play()))
+      runTransportAction(async () => {
+        if (emu.isPlaying) {
+          emu.pause();
+          await flushEmulatorPersistence();
+        } else {
+          emu.resume();
+        }
+      })
     );
+
+    async function rebootWithSram(sramBytes) {
+      clearTimeout(sramFlushTimer);
+      if (sramBytes) await dbPut(`sram:${currentRomId}`, sramBytes);
+      await dbDelete(`autoState:${currentRomId}`);
+      clearPendingUnloadFor(currentRomId);
+      emu.destroy();
+      emu = new BinjgbEmulator(binjgb, currentRomBytes, sramBytes, canvas, {
+        onExtRamUpdated: scheduleSramFlush,
+      });
+      emu.resume();
+    }
 
     resetBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        await WasmBoy.reset();
-        await WasmBoy.play();
+        const sram = emu.sramSize > 0 ? emu.getExtRam() : null;
+        await rebootWithSram(sram);
       })
     );
 
     saveStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        const wasPlaying = WasmBoy.isPlaying();
-        await WasmBoy.saveState();
+        await dbPut(`manualState:${currentRomId}`, emu.getSaveState());
         hasManualSave = true;
-        if (wasPlaying) {
-          await WasmBoy.play();
-        }
         return ' — state saved';
       })
     );
 
     loadStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        const manualSave = await getLatestSaveState(false);
-        if (!manualSave) {
+        const state = await dbGet(`manualState:${currentRomId}`);
+        if (!state || !emu.loadState(state)) {
           hasManualSave = false;
-          return '';
+          throw new Error('No compatible manual save state found');
         }
-        await WasmBoy.loadState(manualSave);
-        await WasmBoy.play();
+        emu.resume();
         return ' — state loaded';
       })
     );
 
     exportSavBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        if (currentSramSize <= 0) {
+        if (emu.sramSize <= 0) {
           throw new Error('Cartridge has no battery RAM');
         }
-        const ramLoc = await WasmBoy._getWasmConstant('CARTRIDGE_RAM_LOCATION');
-        const ramBytes = await WasmBoy._getWasmMemorySection(ramLoc, ramLoc + currentSramSize);
+        const ramBytes = emu.getExtRam();
         const safeTitle = (currentRomTitle || 'save').replace(/[^a-zA-Z0-9._-]+/g, '_');
         const url = URL.createObjectURL(new Blob([ramBytes], { type: 'application/octet-stream' }));
         const a = document.createElement('a');
@@ -631,36 +847,61 @@
     );
 
     importSavBtn.addEventListener('click', () => {
-      if (isBusy || !hasLoadedRom || currentSramSize <= 0) return;
+      if (isBusy || !emu || emu.sramSize <= 0) return;
       blurActiveElement();
       savInput.click();
     });
 
     savInput.addEventListener('change', async () => {
-      const file = savInput.files && savInput.files[0];
+      const file = savInput.files?.[0];
       savInput.value = '';
       if (!file) {
         blurActiveElement();
         return;
       }
       await runTransportAction(async () => {
-        if (currentSramSize <= 0) {
+        if (emu.sramSize <= 0) {
           throw new Error('Cartridge has no battery RAM');
         }
         const raw = new Uint8Array(await file.arrayBuffer());
         if (raw.length === 0 || raw.length > 0x40000) {
           throw new Error('Invalid .sav file size');
         }
-        const normalized = new Uint8Array(currentSramSize);
-        normalized.set(raw.subarray(0, currentSramSize));
-        await WasmBoy.pause();
-        const info = await WasmBoy._getCartridgeInfo();
-        await WasmBoy._saveCartridgeRam(info.header, normalized);
-        await WasmBoy._loadCartridgeRam();
-        await WasmBoy.reset();
-        await WasmBoy.play();
+        const normalized = new Uint8Array(emu.sramSize);
+        normalized.set(raw.subarray(0, emu.sramSize));
+        await rebootWithSram(normalized);
         return ' — imported .sav';
       });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      resumeAudioSafely();
+      const btn = KEY_MAP[e.code];
+      if (!btn || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (document.activeElement && INPUT_TAGS.has(document.activeElement.tagName)) return;
+      heldKeys.add(btn);
+      e.preventDefault();
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const btn = KEY_MAP[e.code];
+      if (!btn) return;
+      heldKeys.delete(btn);
+    });
+
+    window.addEventListener('blur', () => heldKeys.clear());
+    window.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
+    window.addEventListener('pagehide', writeUnloadSnapshot);
+    window.addEventListener('beforeunload', writeUnloadSnapshot);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        writeUnloadSnapshot();
+        if (emu && emu.isPlaying && !isBusy) {
+          emu.pause();
+          syncControls();
+          flushEmulatorPersistence();
+        }
+      }
     });
 
     let dragDepth = 0;
@@ -669,42 +910,41 @@
       dragDepth++;
       document.body.classList.add('dragging');
     });
-    window.addEventListener('dragover', (e) => {
-      e.preventDefault();
-    });
+    window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('dragleave', (e) => {
       e.preventDefault();
       dragDepth = Math.max(0, dragDepth - 1);
-      if (dragDepth === 0) {
-        document.body.classList.remove('dragging');
-      }
+      if (dragDepth === 0) document.body.classList.remove('dragging');
     });
     window.addEventListener('drop', async (e) => {
       e.preventDefault();
       dragDepth = 0;
       document.body.classList.remove('dragging');
       const file = e.dataTransfer?.files?.[0];
-      if (file) {
-        await loadRom(file, file.name, { persist: true });
-      }
+      if (file) await loadRom(file, file.name, { persist: true });
     });
 
-    window.addEventListener('pointerdown', resumeAudioSafely, { passive: true });
-    window.addEventListener('keydown', resumeAudioSafely, { passive: true });
+    try {
+      binjgb = await Binjgb({ locateFile: (path) => `./vendor/binjgb/${path}` });
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = `Failed to initialize emulator: ${err?.message || err}`;
+      throw err;
+    }
 
     const params = new URLSearchParams(window.location.search);
     const romUrl = params.get('rom');
     if (romUrl) {
       loadRom(romUrl, romUrl.split('/').pop());
     } else {
-      loadLastRom().then((savedFile) => {
-        if (savedFile && !hasLoadedRom) {
-          loadRom(savedFile, savedFile.name);
+      dbGet(LAST_ROM_KEY).then((record) => {
+        if (record?.bytes && record?.name && !emu) {
+          loadRom(new File([record.bytes], record.name), record.name);
         }
       });
     }
 
-    window.__retroIdle = { WasmBoy, loadRom };
+    window.__retroIdle = { getEmulator: () => emu, loadRom };
   </script>
 </body>
 </html>
