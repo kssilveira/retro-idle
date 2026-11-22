@@ -153,7 +153,7 @@
       color: #f87171;
     }
 
-    #pokecenter-status {
+    #heal-center-status {
       width: 100%;
       text-align: center;
       font-size: 0.8rem;
@@ -161,7 +161,7 @@
       min-height: 1.15em;
     }
 
-    #pokecenter-status.linked {
+    #heal-center-status.linked {
       color: #34d399;
     }
 
@@ -212,7 +212,7 @@
 
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
     <div id="auto-fight-status" hidden></div>
-    <div id="pokecenter-status" hidden></div>
+    <div id="heal-center-status" hidden></div>
 
     <p class="legend">
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
@@ -313,7 +313,7 @@
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
     const autoFightStatusEl = document.getElementById('auto-fight-status');
-    const pokeCenterStatusEl = document.getElementById('pokecenter-status');
+    const healCenterStatusEl = document.getElementById('heal-center-status');
     const speedButtons = Array.from(document.querySelectorAll('.speed-btn'));
     const statusEl = document.getElementById('status');
 
@@ -333,8 +333,8 @@
     const autoFight = createAutoFight();
     let lastAutoFightText = '';
     let lastAutoFightIsError = false;
-    let lastPokeCenterText = '';
-    let lastPokeCenterLinked = false;
+    let lastHealCenterText = '';
+    let lastHealCenterLinked = false;
     const heldKeys = new Set();
 
     function getAudioContext() {
@@ -754,15 +754,15 @@
       autoFightStatusEl.classList.toggle('error', Boolean(text) && isError);
     }
 
-    function syncPokeCenterStatus() {
+    function syncHealCenterStatus() {
       const supported = Boolean(emu) && isPokemonRedBlueTitle(currentRomTitle);
       if (!supported) {
-        if (lastPokeCenterText !== '' || lastPokeCenterLinked !== false || !pokeCenterStatusEl.hidden) {
-          lastPokeCenterText = '';
-          lastPokeCenterLinked = false;
-          pokeCenterStatusEl.textContent = '';
-          pokeCenterStatusEl.classList.remove('linked');
-          pokeCenterStatusEl.hidden = true;
+        if (lastHealCenterText !== '' || lastHealCenterLinked !== false || !healCenterStatusEl.hidden) {
+          lastHealCenterText = '';
+          lastHealCenterLinked = false;
+          healCenterStatusEl.textContent = '';
+          healCenterStatusEl.classList.remove('linked');
+          healCenterStatusEl.hidden = true;
         }
         return;
       }
@@ -771,22 +771,22 @@
       let text;
       let linked = false;
       if (st.inPokeCenter && st.pokeCenterName) {
-        text = `PokéCenter visited: ${st.pokeCenterName} — exit to record return path`;
+        text = `Heal Center visited: ${st.pokeCenterName} — exit to record return path`;
         linked = true;
       } else if (st.pokeCenterName && st.trailLength > 0) {
         const stepsLabel = st.trailLength === 1 ? 'step' : 'steps';
-        text = `PokéCenter path active: ${st.pokeCenterName} (${st.trailLength} ${stepsLabel})`;
+        text = `Heal Center path active: ${st.pokeCenterName} (${st.trailLength} ${stepsLabel})`;
         linked = true;
       } else {
-        text = 'PokéCenter: not visited yet — visit one to enable auto-heal return';
+        text = 'Heal Center: not visited yet — visit one to enable auto-heal return';
       }
 
-      if (text !== lastPokeCenterText || linked !== lastPokeCenterLinked || pokeCenterStatusEl.hidden) {
-        lastPokeCenterText = text;
-        lastPokeCenterLinked = linked;
-        pokeCenterStatusEl.textContent = text;
-        pokeCenterStatusEl.classList.toggle('linked', linked);
-        pokeCenterStatusEl.hidden = false;
+      if (text !== lastHealCenterText || linked !== lastHealCenterLinked || healCenterStatusEl.hidden) {
+        lastHealCenterText = text;
+        lastHealCenterLinked = linked;
+        healCenterStatusEl.textContent = text;
+        healCenterStatusEl.classList.toggle('linked', linked);
+        healCenterStatusEl.hidden = false;
       }
     }
 
@@ -809,7 +809,7 @@
       autoFightBtn.disabled = !supported || isBusy;
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
       autoFightBtn.classList.toggle('active', active);
-      syncPokeCenterStatus();
+      syncHealCenterStatus();
     }
 
     function stopAutoFight(reason = null) {
@@ -823,15 +823,15 @@
     function formatAutoFightPhase(res, state) {
       switch (res.phase) {
         case 'returning':
-          return 'Auto-Fight: returning to PokéCenter...';
+          return 'Auto-Fight: returning to Heal Center...';
         case 'fleeing':
           return 'Auto-Fight: fleeing battle...';
         case 'healing':
-          return 'Auto-Fight: healing at PokéCenter...';
+          return 'Auto-Fight: healing at Heal Center...';
         case 'walking_back':
           return 'Auto-Fight: walking back to grind spot...';
         default:
-          return `Auto-Fight: ${res.phase}...${state.hasHealPath ? ' (PokéCenter path ready)' : ''}`;
+          return `Auto-Fight: ${res.phase}...${state.hasHealPath ? ' (Heal Center path ready)' : ''}`;
       }
     }
 
@@ -854,7 +854,7 @@
       } else {
         autoFight.observe(readPokemonRedOverworldPos((a) => emu.readMem(a)));
       }
-      syncPokeCenterStatus();
+      syncHealCenterStatus();
     }
 
     function startAutoFight() {

@@ -36,16 +36,16 @@ function makeStandardPokeCenter(name) {
 }
 
 export const POKECENTER_CONFIGS = Object.freeze({
-  0x29: makeStandardPokeCenter('Viridian PokéCenter'),
-  0x3a: makeStandardPokeCenter('Pewter PokéCenter'),
-  0x40: makeStandardPokeCenter('Cerulean PokéCenter'),
-  0x44: makeStandardPokeCenter('Mt. Moon PokéCenter'),
-  0x51: makeStandardPokeCenter('Rock Tunnel PokéCenter'),
-  0x59: makeStandardPokeCenter('Vermilion PokéCenter'),
-  0x85: makeStandardPokeCenter('Celadon PokéCenter'),
-  0x8d: makeStandardPokeCenter('Lavender PokéCenter'),
-  0x9a: makeStandardPokeCenter('Fuchsia PokéCenter'),
-  0xab: makeStandardPokeCenter('Cinnabar PokéCenter'),
+  0x29: makeStandardPokeCenter('Viridian Heal Center'),
+  0x3a: makeStandardPokeCenter('Pewter Heal Center'),
+  0x40: makeStandardPokeCenter('Cerulean Heal Center'),
+  0x44: makeStandardPokeCenter('Mt. Moon Heal Center'),
+  0x51: makeStandardPokeCenter('Rock Tunnel Heal Center'),
+  0x59: makeStandardPokeCenter('Vermilion Heal Center'),
+  0x85: makeStandardPokeCenter('Celadon Heal Center'),
+  0x8d: makeStandardPokeCenter('Lavender Heal Center'),
+  0x9a: makeStandardPokeCenter('Fuchsia Heal Center'),
+  0xab: makeStandardPokeCenter('Cinnabar Heal Center'),
   0xae: Object.freeze({
     standX: 7,
     standY: 7,
@@ -54,7 +54,7 @@ export const POKECENTER_CONFIGS = Object.freeze({
     tileset: 2,
     name: 'Indigo Plateau Lobby',
   }),
-  0xb6: makeStandardPokeCenter('Saffron PokéCenter'),
+  0xb6: makeStandardPokeCenter('Saffron Heal Center'),
 });
 
 const FACING_TO_DIR = Object.freeze({
@@ -78,7 +78,7 @@ const MAX_TRAIL_LENGTH = 2000;
 const WARP_SNAP_GRACE_FRAMES = 60;
 const MOVEMENT_ONE_WAY_MASK = 0xc0;
 const OUT_OF_PP_MISSING_POKECENTER_REASON =
-  'out of PP (missing PokéCenter path — visit a PokéCenter first)';
+  'out of PP (missing Heal Center path — visit a Heal Center first)';
 
 export function isPokeCenterMap(mapId) {
   return Object.hasOwn(POKECENTER_CONFIGS, mapId);
@@ -632,7 +632,7 @@ export function createAutoFight() {
 
     healFrames += 1;
     if (healFrames >= HEAL_STALL_FRAMES) {
-      return stop('healing stalled at PokéCenter');
+      return stop('healing stalled at Heal Center');
     }
 
     if (pulse && pulse.framesLeft > 0) {
@@ -815,10 +815,10 @@ export function createAutoFight() {
     const isOneWay = Boolean(currentNode?.oneWay || targetNode?.oneWay);
 
     if (isOneWay && stuckFrames >= ONE_WAY_STUCK_FRAMES) {
-      return stop('blocked by one-way path — use a different path from the PokéCenter next time');
+      return stop('blocked by one-way path — use a different path from the Heal Center next time');
     }
     if (stuckFrames >= BLOCKED_STUCK_FRAMES) {
-      return stop('path blocked (possible one-way path or obstacle) — use a different path from the PokéCenter next time');
+      return stop('path blocked (possible one-way path or obstacle) — use a different path from the Heal Center next time');
     }
 
     lastPos = { map: snap.map, x: snap.x, y: snap.y };
@@ -900,7 +900,7 @@ export function createAutoFight() {
     }
 
     if (stuckFrames >= BLOCKED_STUCK_FRAMES) {
-      return stop('path blocked returning to grind spot — use a different path from the PokéCenter next time');
+      return stop('path blocked returning to grind spot — use a different path from the Heal Center next time');
     }
 
     lastPos = { map: snap.map, x: snap.x, y: snap.y };

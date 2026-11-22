@@ -225,9 +225,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
   assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing PokéCenter/i);
+  assert.match(res.stopReason, /missing Heal Center/i);
 
   // Mid-animation after using final 1 PP: battleMon.pp becomes 0 during attack animation,
   // should NOT stop until menu reopens or battle ends.
@@ -268,9 +268,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
   assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing PokéCenter/i);
+  assert.match(res.stopReason, /missing Heal Center/i);
 
   // Move Selection Menu with 0 attack PP also stops
   const af3 = createAutoFight();
@@ -284,9 +284,9 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'out of PP (missing PokéCenter path — visit a PokéCenter first)');
+  assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
   assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing PokéCenter/i);
+  assert.match(res.stopReason, /missing Heal Center/i);
 });
 
 test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer battle', () => {
@@ -786,7 +786,7 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
     movementFlags: 0,
   });
   assert.equal(af1.getState().inPokeCenter, true);
-  assert.equal(af1.getState().pokeCenterName, 'Viridian PokéCenter');
+  assert.equal(af1.getState().pokeCenterName, 'Viridian Heal Center');
 
   // 24 fade-out frames where wCurMap is already 1 (Viridian City) while tileset=6 and coords=(3,7)
   for (let i = 0; i < 24; i++) {
@@ -841,7 +841,7 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
   );
   assert.equal(af1.getState().hasHealPath, true);
   assert.equal(af1.getState().inPokeCenter, false);
-  assert.equal(af1.getState().pokeCenterName, 'Viridian PokéCenter');
+  assert.equal(af1.getState().pokeCenterName, 'Viridian Heal Center');
 
   // 2. Warp fade-out WITHOUT tileset / same-tileset gate warp (stale coords for 24 frames, then jump)
   const af2 = createAutoFight();

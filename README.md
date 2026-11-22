@@ -4,6 +4,10 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 
 **Live demo:** <https://kssilveira.github.io/retro-idle/>
 
+![Auto-Fight and automatic Heal Center demo](docs/autofight-demo.gif)
+
+*Demo captured from the real `retro-idle` UI and [autofight.js](autofight.js) state machine using 100% original placeholder pixel art — no commercial ROM assets are included.*
+
 ## Features
 
 - **Zero-build browser GB/GBC emulator** ([index.html](index.html)) powered by vendored MIT-licensed `binjgb` WASM.
@@ -13,8 +17,8 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **Pokémon Red / Blue Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED` or `POKEMON BLUE` ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl).
-  - **Automatic PokéCenter heal-and-return:** Passively records a loop-pruned path from the most recently visited PokéCenter (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP, Auto-Fight flees wild battles, walks back to heal with Nurse Joy, returns to your grinding spot, and resumes fighting.
-  - Automatically stops and releases all buttons on **out of PP without a visited PokéCenter** (`missing PokéCenter path`), **one-way ledge / blocked path** (prompting you to use a returnable path next time), **fainted**, **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
+  - **Automatic Heal Center heal-and-return:** Passively records a loop-pruned path from the most recently visited Heal Center (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP, Auto-Fight flees wild battles, walks back to heal with the healer, returns to your grinding spot, and resumes fighting.
+  - Automatically stops and releases all buttons on **out of PP without a visited Heal Center** (`missing Heal Center path`), **one-way ledge / blocked path** (prompting you to use a returnable path next time), **fainted**, **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
 
 ## Controls
 
