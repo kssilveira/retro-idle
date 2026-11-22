@@ -73,6 +73,7 @@ const OPPOSITE_DIR = Object.freeze({
 
 const ONE_WAY_STUCK_FRAMES = 45;
 const BLOCKED_STUCK_FRAMES = 240;
+const RETURN_STUCK_FRAMES = 150;
 const HEAL_STALL_FRAMES = 1200;
 const MAX_TRAIL_LENGTH = 2000;
 const WARP_SNAP_GRACE_FRAMES = 60;
@@ -293,6 +294,13 @@ function steerSameMap(snap, target) {
   return 'down';
 }
 
+function isValidOverworldCoord(snap) {
+  if (!snap || snap.x === 0xff || snap.y === 0xff) return false;
+  if (snap.mapWidth > 0 && snap.x >= snap.mapWidth) return false;
+  if (snap.mapHeight > 0 && snap.y >= snap.mapHeight) return false;
+  return true;
+}
+
 export function createAutoFight() {
   let active = false;
   let phase = 'idle';
@@ -315,6 +323,7 @@ export function createAutoFight() {
   let trail = [];
   let wasInPokeCenter = false;
   let pendingWarpSnapFrames = 0;
+  let pendingStopReconcileFrames = 0;
   let warpStartTileset = null;
   let prevOverworld = null;
 
@@ -339,6 +348,7 @@ export function createAutoFight() {
     trail = [];
     wasInPokeCenter = false;
     pendingWarpSnapFrames = 0;
+    pendingStopReconcileFrames = 0;
     warpStartTileset = null;
     prevOverworld = null;
   }
@@ -380,17 +390,133 @@ export function createAutoFight() {
     return true;
   }
 
+  function reconcileTrailToPos(pos) {
+    if (pokeCenterMap === null || trail.length === 0 || !isValidOverworldCoord(pos)) {
+      return false;
+    }
+    const facingDir = dirFromFacing(pos.facing);
+    const exactIdx = trail.findIndex((n) => n.map === pos.map && n.x === pos.x && n.y === pos.y);
+    if (exactIdx !== -1) {
+      trail.length = exactIdx + 1;
+      pendingWarpSnapFrames = 0;
+      warpStartTileset = null;
+      prevOverworld = {
+        map: pos.map,
+        x: pos.x,
+        y: pos.y,
+        facingDir: facingDir || prevOverworld?.facingDir || null,
+      };
+      return true;
+    }
+
+    const refIdx = pathIdx >= 0 && pathIdx < trail.length ? pathIdx : trail.length - 1;
+    let bestIdx = -1;
+    let bestDist = 3;
+    let bestRefDelta = Infinity;
+    for (let i = 0; i < trail.length; i++) {
+      const n = trail[i];
+      if (n.map !== pos.map) continue;
+      const dist = Math.abs(pos.x - n.x) + Math.abs(pos.y - n.y);
+      if (dist > 2) continue;
+      const refDelta = Math.abs(i - refIdx);
+      if (dist < bestDist || (dist === bestDist && refDelta < bestRefDelta)) {
+        bestIdx = i;
+        bestDist = dist;
+        bestRefDelta = refDelta;
+      }
+    }
+    if (bestIdx === -1) {
+      return false;
+    }
+
+    const prevNode = trail[bestIdx];
+    const oneWay =
+      Boolean((pos.movementFlags || 0) & MOVEMENT_ONE_WAY_MASK) || bestDist === 2;
+    trail.length = bestIdx + 1;
+    trail.push({
+      map: pos.map,
+      x: pos.x,
+      y: pos.y,
+      enterDir: null,
+      exitDir: null,
+      oneWay,
+    });
+    if (trail.length > MAX_TRAIL_LENGTH) {
+      pokeCenterMap = null;
+      trail = [];
+    }
+    pendingWarpSnapFrames = 0;
+    warpStartTileset = null;
+    prevOverworld = {
+      map: pos.map,
+      x: pos.x,
+      y: pos.y,
+      facingDir: facingDir || dirFromDelta(prevNode, pos) || prevOverworld?.facingDir || null,
+    };
+    return true;
+  }
+
+  function recordMovingStep(snap) {
+    if (!isValidOverworldCoord(snap)) {
+      return;
+    }
+    const facingDir = dirFromFacing(snap.facing);
+    if (!hasHealPath(snap.map) || isPokeCenterMap(snap.map)) {
+      prevOverworld = {
+        map: snap.map,
+        x: snap.x,
+        y: snap.y,
+        facingDir: facingDir || prevOverworld?.facingDir || null,
+      };
+      return;
+    }
+
+    const last = trail[trail.length - 1];
+    if (snap.map === last.map && snap.x === last.x && snap.y === last.y) {
+      prevOverworld = {
+        map: snap.map,
+        x: snap.x,
+        y: snap.y,
+        facingDir: facingDir || prevOverworld?.facingDir || null,
+      };
+      return;
+    }
+
+    const loopIdx = trail.findIndex((n) => n.map === snap.map && n.x === snap.x && n.y === snap.y);
+    if (loopIdx !== -1) {
+      trail.length = loopIdx + 1;
+    } else {
+      const dist = Math.abs(snap.x - last.x) + Math.abs(snap.y - last.y);
+      if (dist <= 2) {
+        const oneWay = Boolean((snap.movementFlags || 0) & MOVEMENT_ONE_WAY_MASK) || dist === 2;
+        trail.push({
+          map: snap.map,
+          x: snap.x,
+          y: snap.y,
+          enterDir: null,
+          exitDir: null,
+          oneWay,
+        });
+        if (trail.length > MAX_TRAIL_LENGTH) {
+          pokeCenterMap = null;
+          trail = [];
+        }
+      }
+    }
+
+    prevOverworld = {
+      map: snap.map,
+      x: snap.x,
+      y: snap.y,
+      facingDir: facingDir || dirFromDelta(last, snap) || prevOverworld?.facingDir || null,
+    };
+  }
+
   function observe(snap) {
     if (active || !snap || snap.isInBattle !== 0 || (snap.partyCount ?? 1) === 0) {
       return;
     }
-    if (snap.x === 0xff || snap.y === 0xff) {
-      return;
-    }
-    if (snap.mapWidth > 0 && snap.x >= snap.mapWidth) {
-      return;
-    }
-    if (snap.mapHeight > 0 && snap.y >= snap.mapHeight) {
+    if (!isValidOverworldCoord(snap)) {
       return;
     }
 
@@ -398,10 +524,11 @@ export function createAutoFight() {
 
     if (isPokeCenterMap(snap.map)) {
       pokeCenterMap = snap.map;
-      pokeCenterTileset = snap.tileset ?? POKECENTER_CONFIGS[snap.map].tileset;
+      pokeCenterTileset = POKECENTER_CONFIGS[snap.map].tileset;
       trail = [];
       wasInPokeCenter = true;
       pendingWarpSnapFrames = 0;
+      pendingStopReconcileFrames = 0;
       warpStartTileset = null;
       prevOverworld = { map: snap.map, x: snap.x, y: snap.y, facingDir };
       return;
@@ -417,6 +544,7 @@ export function createAutoFight() {
       const exitDir = OPPOSITE_DIR[enterDir] || 'up';
       trail = [{ map: snap.map, x: snap.x, y: snap.y, enterDir, exitDir, oneWay: false }];
       pendingWarpSnapFrames = WARP_SNAP_GRACE_FRAMES;
+      pendingStopReconcileFrames = 0;
       warpStartTileset = snap.tileset ?? null;
       prevOverworld = { map: snap.map, x: snap.x, y: snap.y, facingDir };
       return;
@@ -429,6 +557,7 @@ export function createAutoFight() {
 
     const last = trail[trail.length - 1];
     if (snap.map === last.map && snap.x === last.x && snap.y === last.y) {
+      pendingStopReconcileFrames = 0;
       if (pendingWarpSnapFrames > 0) {
         pendingWarpSnapFrames -= 1;
         if (pendingWarpSnapFrames === 0) {
@@ -440,6 +569,31 @@ export function createAutoFight() {
         x: snap.x,
         y: snap.y,
         facingDir: facingDir || prevOverworld?.facingDir || null,
+      };
+      return;
+    }
+
+    if (pendingStopReconcileFrames > 0) {
+      if (reconcileTrailToPos(snap)) {
+        pendingStopReconcileFrames = 0;
+        return;
+      }
+      pendingStopReconcileFrames -= 1;
+      if (pendingStopReconcileFrames > 0) {
+        return;
+      }
+    }
+
+    const loopIdx = trail.findIndex((n) => n.map === snap.map && n.x === snap.x && n.y === snap.y);
+    if (loopIdx !== -1) {
+      trail.length = loopIdx + 1;
+      pendingWarpSnapFrames = 0;
+      warpStartTileset = null;
+      prevOverworld = {
+        map: snap.map,
+        x: snap.x,
+        y: snap.y,
+        facingDir: facingDir || dirFromDelta(last, snap) || prevOverworld?.facingDir || null,
       };
       return;
     }
@@ -474,18 +628,6 @@ export function createAutoFight() {
       warpStartTileset = null;
     }
 
-    const loopIdx = trail.findIndex((n) => n.map === snap.map && n.x === snap.x && n.y === snap.y);
-    if (loopIdx !== -1) {
-      trail.length = loopIdx + 1;
-      prevOverworld = {
-        map: snap.map,
-        x: snap.x,
-        y: snap.y,
-        facingDir: facingDir || dirFromDelta(last, snap) || prevOverworld?.facingDir || null,
-      };
-      return;
-    }
-
     const oneWay =
       Boolean((snap.movementFlags || 0) & MOVEMENT_ONE_WAY_MASK) ||
       (snap.map === last.map && Math.abs(snap.x - last.x) + Math.abs(snap.y - last.y) === 2);
@@ -514,6 +656,10 @@ export function createAutoFight() {
   }
 
   function stop(reason = 'manual') {
+    const wasActive = active;
+    const prevPhase = phase;
+    const prevTravelMode = travelMode;
+
     active = false;
     stopReason = reason;
     phase = 'idle';
@@ -523,6 +669,29 @@ export function createAutoFight() {
     healSubphase = null;
     stuckFrames = 0;
     healFrames = 0;
+
+    if (wasActive && pokeCenterMap !== null) {
+      if (prevPhase === 'healing') {
+        wasInPokeCenter = true;
+        pokeCenterTileset = POKECENTER_CONFIGS[pokeCenterMap]?.tileset ?? pokeCenterTileset;
+        trail = [];
+        pendingWarpSnapFrames = 0;
+        warpStartTileset = null;
+        pendingStopReconcileFrames = 0;
+        prevOverworld = null;
+      } else if (
+        prevPhase === 'returning' ||
+        prevPhase === 'walking_back' ||
+        prevTravelMode !== null
+      ) {
+        if (reconcileTrailToPos(lastPos)) {
+          pendingStopReconcileFrames = 0;
+        } else if (trail.length > 0) {
+          pendingStopReconcileFrames = WARP_SNAP_GRACE_FRAMES;
+        }
+      }
+    }
+
     return {
       active: false,
       buttons: { ...NEUTRAL_BUTTONS },
@@ -553,6 +722,15 @@ export function createAutoFight() {
     overworldCooldown = 0;
     pulse = null;
     cooldown = 0;
+    pendingStopReconcileFrames = 0;
+    if (
+      pokeCenterMap !== null &&
+      trail.length > 0 &&
+      !isPokeCenterMap(snap.map) &&
+      isValidOverworldCoord(snap)
+    ) {
+      reconcileTrailToPos(snap);
+    }
     travelMode = null;
     pathIdx = -1;
     stuckFrames = 0;
@@ -919,6 +1097,9 @@ export function createAutoFight() {
     if (!lead) {
       return stop('fainted');
     }
+    if (snap.map === anchor.map) {
+      recordMovingStep(snap);
+    }
     if (pickAttackSlot(lead.moves, lead.pp) === -1) {
       if (hasHealPath(anchor.map)) {
         beginReturning(snap);
@@ -934,11 +1115,16 @@ export function createAutoFight() {
     if (snap.x !== anchor.x || snap.y !== anchor.y) {
       atAnchorFrames = 0;
       if (snap.x === lastPos.x && snap.y === lastPos.y) {
-        returnStuckFrames += 1;
+        if (overworldCooldown > 0) {
+          overworldCooldown -= 1;
+        } else {
+          returnStuckFrames += 1;
+        }
       } else {
         returnStuckFrames = 0;
+        overworldCooldown = 0;
       }
-      if (returnStuckFrames >= 48) {
+      if (returnStuckFrames >= RETURN_STUCK_FRAMES) {
         anchor = { map: snap.map, x: snap.x, y: snap.y };
         returnStuckFrames = 0;
         dir = DIRS[dirIndex];
@@ -1043,6 +1229,9 @@ export function createAutoFight() {
       battleMonReady = false;
       pulse = null;
       cooldown = 0;
+      if (isValidOverworldCoord(snap)) {
+        lastPos = { map: snap.map, x: snap.x, y: snap.y };
+      }
     }
 
     if (
@@ -1145,7 +1334,7 @@ export function createAutoFight() {
       pokeCenterName:
         pokeCenterMap !== null ? POKECENTER_CONFIGS[pokeCenterMap]?.name ?? null : null,
       inPokeCenter: wasInPokeCenter,
-      hasHealPath: hasHealPath(anchor?.map ?? prevOverworld?.map),
+      hasHealPath: hasHealPath(active ? anchor?.map : prevOverworld?.map ?? anchor?.map),
       trailLength: trail.length,
       healSubphase,
     }),

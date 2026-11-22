@@ -963,3 +963,344 @@ test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing 
   assert.equal(res.phase, 'walking_back');
   assert.equal(res.buttons.down, true);
 });
+
+test('stopping during returning, walking_back, and ambush fleeing preserves heal path across observe() and restart', () => {
+  const zeroPpParty = [
+    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+  ];
+  const healedParty = [
+    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
+  ];
+
+  function setupRoute1Trail() {
+    const af = createAutoFight();
+    af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    for (const [x, y] of [
+      [23, 25],
+      [23, 26],
+      [23, 27],
+    ]) {
+      af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    }
+    for (const [x, y] of [
+      [10, 0],
+      [10, 1],
+      [10, 2],
+      [10, 3],
+      [10, 4],
+      [10, 5],
+    ]) {
+      af.observe({ isInBattle: 0, map: 12, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    }
+    return af;
+  }
+
+  // 1. Stop during returning on the same map > 2 tiles from grind spot (10, 5)
+  const afRetSameMap = setupRoute1Trail();
+  afRetSameMap.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
+  for (const y of [5, 4, 3, 2]) {
+    const res = afRetSameMap.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
+    assert.equal(res.phase, 'returning');
+  }
+  afRetSameMap.stop('manual');
+  assert.equal(afRetSameMap.getState().hasHealPath, true);
+  assert.equal(afRetSameMap.getState().pokeCenterMap, 0x29);
+  assert.equal(afRetSameMap.getState().trailLength, 6);
+
+  // Subsequent observe() frames on Route 1 must keep and continue pruning the trail
+  afRetSameMap.observe({ isInBattle: 0, map: 12, x: 10, y: 2, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  afRetSameMap.observe({ isInBattle: 0, map: 12, x: 10, y: 1, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  assert.equal(afRetSameMap.getState().hasHealPath, true);
+  assert.equal(afRetSameMap.getState().trailLength, 5);
+
+  afRetSameMap.start(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
+  const restartedSameMap = afRetSameMap.step(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
+  assert.equal(restartedSameMap.active, true);
+  assert.equal(restartedSameMap.phase, 'returning');
+
+  // 2. Stop during returning on an earlier map (Viridian City map 1)
+  const afRetEarlierMap = setupRoute1Trail();
+  afRetEarlierMap.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
+  for (const y of [5, 4, 3, 2, 1, 0]) {
+    afRetEarlierMap.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
+  }
+  afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 27, party: zeroPpParty }));
+  afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  afRetEarlierMap.stop('manual');
+  assert.equal(afRetEarlierMap.getState().hasHealPath, true);
+  assert.equal(afRetEarlierMap.getState().trailLength, 2);
+
+  afRetEarlierMap.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  assert.equal(afRetEarlierMap.getState().hasHealPath, true);
+  assert.equal(afRetEarlierMap.getState().trailLength, 2);
+
+  afRetEarlierMap.start(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  const restartedEarlierMap = afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  assert.equal(restartedEarlierMap.active, true);
+  assert.equal(restartedEarlierMap.phase, 'returning');
+
+  // 3. Stop during ambush fleeing (both >2 tiles from grind spot and on an earlier map)
+  const afFlee = setupRoute1Trail();
+  afFlee.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
+  for (const y of [5, 4, 3, 2]) {
+    afFlee.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
+  }
+  const fleeStep = afFlee.step(
+    makeSnapshot({
+      map: 12,
+      x: 10,
+      y: 2,
+      isInBattle: 1,
+      fightPos: { row: 14, col: 10 },
+      runPos: { row: 16, col: 16 },
+      hasRun: true,
+      cursorPos: { row: 14, col: 9 },
+      party: zeroPpParty,
+    })
+  );
+  assert.equal(fleeStep.phase, 'fleeing');
+  afFlee.stop('manual');
+  assert.equal(afFlee.getState().hasHealPath, true);
+  assert.equal(afFlee.getState().trailLength, 6);
+
+  // Restarting while still in ambush battle on an earlier map reconciles trail cleanly
+  const afFleeEarlier = setupRoute1Trail();
+  afFleeEarlier.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
+  for (const y of [5, 4, 3, 2, 1, 0]) {
+    afFleeEarlier.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
+  }
+  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 27, party: zeroPpParty }));
+  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 26, isInBattle: 1, party: zeroPpParty }));
+  afFleeEarlier.stop('manual');
+  assert.equal(afFleeEarlier.getState().hasHealPath, true);
+  assert.equal(afFleeEarlier.getState().trailLength, 2);
+
+  afFleeEarlier.start(
+    makeSnapshot({
+      map: 1,
+      x: 23,
+      y: 26,
+      isInBattle: 1,
+      fightPos: { row: 14, col: 10 },
+      runPos: { row: 16, col: 16 },
+      hasRun: true,
+      cursorPos: { row: 14, col: 9 },
+      party: zeroPpParty,
+      battleMon: { hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+    })
+  );
+  const restartAmbush = afFleeEarlier.step(
+    makeSnapshot({
+      map: 1,
+      x: 23,
+      y: 26,
+      isInBattle: 1,
+      fightPos: { row: 14, col: 10 },
+      runPos: { row: 16, col: 16 },
+      hasRun: true,
+      cursorPos: { row: 14, col: 9 },
+      party: zeroPpParty,
+      battleMon: { hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+    })
+  );
+  assert.equal(restartAmbush.active, true);
+  assert.equal(restartAmbush.phase, 'fleeing');
+
+  // 4. Stop during walking_back on earlier map preserves trail
+  const afWalkBack = setupRoute1Trail();
+  afWalkBack.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
+  for (const y of [5, 4, 3, 2, 1, 0]) {
+    afWalkBack.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
+  }
+  for (const y of [27, 26, 25]) {
+    afWalkBack.step(makeSnapshot({ map: 1, x: 23, y, party: zeroPpParty }));
+  }
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 7, facing: 0x04, party: zeroPpParty }));
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
+  for (let i = 0; i < 12; i++) {
+    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
+  }
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
+  for (let i = 0; i < 8; i++) {
+    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
+  }
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 4, facing: 0x00, party: healedParty }));
+  afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
+  const wbRes = afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 26, party: healedParty }));
+  assert.equal(wbRes.phase, 'walking_back');
+
+  afWalkBack.stop('manual');
+  assert.equal(afWalkBack.getState().hasHealPath, true);
+  assert.equal(afWalkBack.getState().trailLength, 2);
+  afWalkBack.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  assert.equal(afWalkBack.getState().hasHealPath, true);
+  assert.equal(afWalkBack.getState().trailLength, 2);
+});
+
+test('stepMoving respects cooldown before re-anchoring and records drift >= 3 tiles so stopping preserves trail', () => {
+  const af = createAutoFight();
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 5, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  const initialLen = af.getState().trailLength;
+
+  af.start(makeSnapshot({ map: 12, x: 10, y: 5 }));
+  af.step(makeSnapshot({ map: 12, x: 10, y: 5 }));
+  af.step(makeSnapshot({ map: 12, x: 11, y: 5 }));
+
+  // Enter battle on (11, 5) and return to overworld -> sets overworldCooldown = 30
+  af.step(makeSnapshot({ map: 12, x: 11, y: 5, isInBattle: 1 }));
+  af.step(makeSnapshot({ map: 12, x: 11, y: 5, isInBattle: 0 }));
+
+  // 30 cooldown + 100 pre-battle transition frames stationary at (11, 5) must NOT shift anchor
+  for (let i = 0; i < 130; i++) {
+    af.step(makeSnapshot({ map: 12, x: 11, y: 5 }));
+  }
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 5 });
+
+  // Remaining 48 stuck frames stay at old anchor, then 49th (150th stuck frame) re-anchors to (11, 5)
+  for (let i = 0; i < 48; i++) {
+    af.step(makeSnapshot({ map: 12, x: 11, y: 5 }));
+  }
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 5 });
+  af.step(makeSnapshot({ map: 12, x: 11, y: 5 }));
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 11, y: 5 });
+
+  // Drift two more tiles right to (13, 5) (3 tiles total from (10, 5))
+  af.step(makeSnapshot({ map: 12, x: 12, y: 5 }));
+  for (let i = 0; i < 150; i++) {
+    af.step(makeSnapshot({ map: 12, x: 12, y: 5 }));
+  }
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 12, y: 5 });
+
+  af.step(makeSnapshot({ map: 12, x: 13, y: 5 }));
+  for (let i = 0; i < 150; i++) {
+    af.step(makeSnapshot({ map: 12, x: 13, y: 5 }));
+  }
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 13, y: 5 });
+
+  af.stop('manual');
+  af.observe({ isInBattle: 0, map: 12, x: 13, y: 5, partyCount: 1, facing: 0x0c, movementFlags: 0 });
+  assert.equal(af.getState().hasHealPath, true);
+  assert.equal(af.getState().trailLength, initialLen + 3);
+});
+
+test('stopping during healing or exiting warp fade-out keeps inPokeCenter true and records fresh trail on exit', () => {
+  const zeroPpParty = [
+    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+  ];
+  const healedParty = [
+    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
+  ];
+
+  const af = createAutoFight();
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+
+  af.start(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 0x29, x: 3, y: 7, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  for (let i = 0; i < 12; i++) {
+    af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: zeroPpParty }));
+  }
+  af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: healedParty }));
+  for (let i = 0; i < 8; i++) {
+    af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, facing: 0x04, party: healedParty }));
+  }
+  af.step(makeSnapshot({ map: 0x29, x: 3, y: 4, tileset: 6, facing: 0x00, party: healedParty }));
+
+  // Enter exit fade-out: map is already 1 while tileset=6 and coords=(3,7)
+  const fadeOutStep = af.step(makeSnapshot({ map: 1, x: 3, y: 7, tileset: 6, party: healedParty }));
+  assert.equal(fadeOutStep.phase, 'healing');
+
+  af.stop('manual');
+  assert.equal(af.getState().inPokeCenter, true);
+  assert.equal(af.getState().pokeCenterMap, 0x29);
+
+  // Remaining fade-out frames observed while stopped stay inPokeCenter with empty trail
+  for (let i = 0; i < 10; i++) {
+    af.observe({ isInBattle: 0, map: 1, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    assert.equal(af.getState().inPokeCenter, true);
+    assert.equal(af.getState().trailLength, 0);
+  }
+
+  // Outside tileset loads at (1, 23, 25) -> fresh trail starts cleanly
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  assert.equal(af.getState().inPokeCenter, false);
+  assert.equal(af.getState().hasHealPath, true);
+  assert.equal(af.getState().trailLength, 1);
+  const exported = af.exportTrail();
+  assert.deepEqual(exported.trail.map((n) => [n.map, n.x, n.y]), [[1, 23, 25]]);
+  assert.equal(exported.trail[0].enterDir, 'down');
+  assert.equal(exported.trail[0].exitDir, 'up');
+});
+
+test('stopping during returning gate warp fade-out waits out grace window and snaps back onto trail', () => {
+  const zeroPpParty = [
+    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
+  ];
+
+  const af = createAutoFight();
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 7, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 6, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 1, partyCount: 1, facing: 0x04, movementFlags: 0 });
+
+  af.start(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 12, x: 10, y: 0, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 0x2f, x: 4, y: 6, party: zeroPpParty }));
+  af.step(makeSnapshot({ map: 0x2f, x: 4, y: 7, party: zeroPpParty }));
+
+  // Gate warp fade-out: map changed to 1 while coords are still gate (4, 7)
+  af.step(makeSnapshot({ map: 1, x: 4, y: 7, party: zeroPpParty }));
+  af.stop('manual');
+
+  for (let i = 0; i < 20; i++) {
+    af.observe({ isInBattle: 0, map: 1, x: 4, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    assert.equal(af.getState().pokeCenterMap, 0x29);
+    assert.ok(af.getState().trailLength > 0);
+  }
+
+  // Destination coords (1, 23, 26) load -> snaps cleanly onto trail
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  assert.equal(af.getState().hasHealPath, true);
+  assert.deepEqual(
+    af.exportTrail().trail.map((n) => [n.map, n.x, n.y]),
+    [
+      [1, 23, 25],
+      [1, 23, 26],
+    ]
+  );
+});
+
+test('redundant stop() while inactive preserves trail/inPokeCenter and hasHealPath tracks manual backtracking', () => {
+  const af = createAutoFight();
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.stop('manual');
+  assert.equal(af.getState().inPokeCenter, true);
+  assert.equal(af.getState().pokeCenterMap, 0x29);
+
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+
+  af.start(makeSnapshot({ map: 12, x: 10, y: 0 }));
+  af.stop('manual');
+  // Redundant stop while already inactive must not alter trail
+  af.stop('manual');
+  assert.equal(af.getState().hasHealPath, true);
+  assert.equal(af.getState().trailLength, 3);
+
+  // Manually walk back onto map 1 (while anchor was map 12) -> hasHealPath must reflect map 1
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  assert.equal(af.getState().trailLength, 2);
+  assert.equal(af.getState().hasHealPath, true);
+});
