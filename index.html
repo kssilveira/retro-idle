@@ -98,7 +98,8 @@
       cursor: not-allowed;
     }
 
-    #rom-input {
+    #rom-input,
+    #sav-input {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -144,6 +145,9 @@
       <button type="button" id="reset-btn" disabled>Reset</button>
       <button type="button" id="save-state-btn" disabled>Save State</button>
       <button type="button" id="load-state-btn" disabled>Load State</button>
+      <button type="button" id="export-sav-btn" disabled>Export .sav</button>
+      <button type="button" id="import-sav-btn" disabled>Import .sav</button>
+      <input type="file" id="sav-input" accept=".sav" />
     </div>
 
     <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
@@ -167,6 +171,9 @@
     const resetBtn = document.getElementById('reset-btn');
     const saveStateBtn = document.getElementById('save-state-btn');
     const loadStateBtn = document.getElementById('load-state-btn');
+    const exportSavBtn = document.getElementById('export-sav-btn');
+    const importSavBtn = document.getElementById('import-sav-btn');
+    const savInput = document.getElementById('sav-input');
     const statusEl = document.getElementById('status');
 
     function base64ToBytes(b64) {
@@ -257,6 +264,14 @@
       }
       source = source.replace(loadStateAssignTarget, loadStateAssignFixed);
 
+      const cartridgeInfoTarget = '_getCartridgeInfo:N.getCartridgeInfo.bind(N)';
+      const cartridgeInfoFixed =
+        '_getCartridgeInfo:N.getCartridgeInfo.bind(N),_saveCartridgeRam:N.saveCartridgeRam.bind(N),_loadCartridgeRam:N.loadCartridgeRam.bind(N)';
+      if (!source.includes(cartridgeInfoTarget)) {
+        throw new Error('Could not locate WasmBoy cartridge info export');
+      }
+      source = source.replace(cartridgeInfoTarget, cartridgeInfoFixed);
+
       const blobUrl = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
       try {
         const mod = await import(blobUrl);
@@ -296,6 +311,8 @@
     };
 
     let currentHeaderText = '';
+    let currentRomTitle = '';
+    let currentSramSize = 0;
     let hasLoadedRom = false;
     let hasManualSave = false;
     let isBusy = false;
@@ -311,6 +328,9 @@
       resetBtn.disabled = !hasLoadedRom || isBusy;
       saveStateBtn.disabled = !hasLoadedRom || isBusy;
       loadStateBtn.disabled = !hasLoadedRom || !hasManualSave || isBusy;
+      const canUseSav = hasLoadedRom && currentSramSize > 0 && !isBusy;
+      exportSavBtn.disabled = !canUseSav;
+      importSavBtn.disabled = !canUseSav;
     }
 
     function syncControls(statusSuffix = '') {
@@ -361,12 +381,27 @@
       }
     }
 
-    function parseRomHeader(bytes) {
-      if (!bytes || bytes.length < 0x0150) {
+    const SRAM_SIZES = {
+      0x01: 0x0800,
+      0x02: 0x2000,
+      0x03: 0x8000,
+      0x04: 0x20000,
+      0x05: 0x10000,
+    };
+
+    function getCartridgeSramSize(typeCode, ramSizeCode) {
+      if (typeCode === 0x00) return 0;
+      if (SRAM_SIZES[ramSizeCode]) return SRAM_SIZES[ramSizeCode];
+      if (typeCode === 0x05 || typeCode === 0x06) return 0x0800;
+      return 0;
+    }
+
+    function parseRomHeader(bytes, baseOffset = 0x0134) {
+      if (!bytes || bytes.length < baseOffset + 0x1c) {
         return null;
       }
       let title = '';
-      for (let i = 0x0134; i <= 0x0142; i++) {
+      for (let i = baseOffset; i <= baseOffset + 0x0e; i++) {
         const ch = bytes[i];
         if (ch === 0) break;
         if (ch >= 0x20 && ch <= 0x7e) {
@@ -374,20 +409,11 @@
         }
       }
       title = title.trim() || 'UNKNOWN';
-      const typeCode = bytes[0x0147];
+      const typeCode = bytes[baseOffset + 0x13];
+      const ramSizeCode = bytes[baseOffset + 0x15];
+      const sramSize = getCartridgeSramSize(typeCode, ramSizeCode);
       const mbc = CARTRIDGE_TYPES[typeCode] || `TYPE 0x${typeCode.toString(16).padStart(2, '0').toUpperCase()}`;
-      return { title, mbc, typeCode };
-    }
-
-    async function extractHeader(romSource, fileName) {
-      if (romSource instanceof Uint8Array) {
-        return parseRomHeader(romSource);
-      }
-      if (romSource instanceof Blob && !String(fileName || '').toLowerCase().endsWith('.zip')) {
-        const slice = await romSource.slice(0, 0x0150).arrayBuffer();
-        return parseRomHeader(new Uint8Array(slice));
-      }
-      return null;
+      return { title, mbc, typeCode, ramSizeCode, sramSize };
     }
 
     function resumeAudioSafely() {
@@ -494,7 +520,11 @@
         hasManualSave = Boolean(await getLatestSaveState(false).catch(() => null));
         await WasmBoy.play();
 
-        const header = await extractHeader(romSource, label);
+        const romLoc = await WasmBoy._getWasmConstant('CARTRIDGE_ROM_LOCATION');
+        const headerSlice = await WasmBoy._getWasmMemorySection(romLoc + 0x0134, romLoc + 0x0150);
+        const header = parseRomHeader(headerSlice, 0);
+        currentRomTitle = header ? header.title : label;
+        currentSramSize = header ? header.sramSize : 0;
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
         loadStatusSuffix = restoredAutoSave ? ' — resumed auto-save' : '';
         hasLoadedRom = true;
@@ -581,6 +611,57 @@
         return ' — state loaded';
       })
     );
+
+    exportSavBtn.addEventListener('click', () =>
+      runTransportAction(async () => {
+        if (currentSramSize <= 0) {
+          throw new Error('Cartridge has no battery RAM');
+        }
+        const ramLoc = await WasmBoy._getWasmConstant('CARTRIDGE_RAM_LOCATION');
+        const ramBytes = await WasmBoy._getWasmMemorySection(ramLoc, ramLoc + currentSramSize);
+        const safeTitle = (currentRomTitle || 'save').replace(/[^a-zA-Z0-9._-]+/g, '_');
+        const url = URL.createObjectURL(new Blob([ramBytes], { type: 'application/octet-stream' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${safeTitle}.sav`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return ' — exported .sav';
+      })
+    );
+
+    importSavBtn.addEventListener('click', () => {
+      if (isBusy || !hasLoadedRom || currentSramSize <= 0) return;
+      blurActiveElement();
+      savInput.click();
+    });
+
+    savInput.addEventListener('change', async () => {
+      const file = savInput.files && savInput.files[0];
+      savInput.value = '';
+      if (!file) {
+        blurActiveElement();
+        return;
+      }
+      await runTransportAction(async () => {
+        if (currentSramSize <= 0) {
+          throw new Error('Cartridge has no battery RAM');
+        }
+        const raw = new Uint8Array(await file.arrayBuffer());
+        if (raw.length === 0 || raw.length > 0x40000) {
+          throw new Error('Invalid .sav file size');
+        }
+        const normalized = new Uint8Array(currentSramSize);
+        normalized.set(raw.subarray(0, currentSramSize));
+        await WasmBoy.pause();
+        const info = await WasmBoy._getCartridgeInfo();
+        await WasmBoy._saveCartridgeRam(info.header, normalized);
+        await WasmBoy._loadCartridgeRam();
+        await WasmBoy.reset();
+        await WasmBoy.play();
+        return ' — imported .sav';
+      });
+    });
 
     let dragDepth = 0;
     window.addEventListener('dragenter', (e) => {
