@@ -8,6 +8,7 @@ const REPO_DIR = path.resolve(import.meta.dirname, '..');
 const TMP_DIR = path.join(import.meta.dirname, '.tmp');
 const ROM_PATH = path.join(TMP_DIR, 'mbc3-test.gb');
 const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
+const CRYSTAL_ROM_PATH = path.join(TMP_DIR, 'pokemon-crystal-test.gbc');
 const IMPORTED_SAV_PATH = path.join(TMP_DIR, 'imported.sav');
 const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
 const SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot.png');
@@ -101,6 +102,10 @@ async function main() {
   fs.writeFileSync(
     YELLOW_ROM_PATH,
     buildTestRom({ title: 'POKEMON YELLOW', cgbFlag: 0x80, cartType: 0x1b })
+  );
+  fs.writeFileSync(
+    CRYSTAL_ROM_PATH,
+    buildTestRom({ title: 'PM_CRYSTAL', cgbFlag: 0xc0, cartType: 0x10 })
   );
   fs.rmSync(CHROME_PROFILE, { recursive: true, force: true });
   fs.mkdirSync(CHROME_PROFILE, { recursive: true });
@@ -1143,6 +1148,189 @@ async function main() {
     assert.equal(yellowCheck.snapshot.party[0].moves[0], 84);
     assert.equal(yellowCheck.snapshot.party[0].pp[0], 30);
 
+    // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + shiny stop + Uncaught toggle
+    const docCrystal = await client.send('DOM.getDocument');
+    const crystalInputNode = await client.send('DOM.querySelector', {
+      nodeId: docCrystal.root.nodeId,
+      selector: '#rom-input',
+    });
+    await client.send('DOM.setFileInputFiles', {
+      nodeId: crystalInputNode.nodeId,
+      files: [CRYSTAL_ROM_PATH],
+    });
+
+    await waitFor(
+      async () =>
+        await client.eval(
+          `Boolean(window.__retroIdle?.getEmulator()?.isPlaying && window.__retroIdle?.getAutoFight()?.profile === 'pokemon-crystal')`
+        ),
+      12000,
+      50
+    );
+
+    const crystalUi = await client.eval(`({
+      status: document.getElementById('status').textContent,
+      autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
+      stopUncaughtHidden: document.getElementById('stop-uncaught-btn').hidden,
+      stopUncaughtActive: document.getElementById('stop-uncaught-btn').classList.contains('active'),
+      stopUncaughtPressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
+      healHidden: document.getElementById('heal-center-status').hidden,
+      supported: window.__retroIdle.getAutoFight().supported,
+      profile: window.__retroIdle.getAutoFight().profile,
+      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
+    })`);
+    assert.match(
+      crystalUi.status,
+      /^Playing: PM_CRYSTAL \(MBC3 \+ TIMER \+ RAM \+ BATTERY\)$/,
+      `Unexpected Crystal status: ${crystalUi.status}`
+    );
+    assert.equal(crystalUi.autoFightDisabled, false, 'Auto-Fight button must enable for PM_CRYSTAL');
+    assert.equal(crystalUi.stopUncaughtHidden, false, 'Stop: Uncaught button must be visible for PM_CRYSTAL');
+    assert.equal(crystalUi.stopUncaughtActive, true, 'Stop: Uncaught button should start active');
+    assert.equal(crystalUi.stopUncaughtPressed, 'true', 'Stop: Uncaught aria-pressed should start true');
+    assert.equal(crystalUi.healHidden, false, 'Heal Center status must be visible for PM_CRYSTAL');
+    assert.equal(crystalUi.supported, true, 'Auto-Fight supported must be true for PM_CRYSTAL');
+    assert.equal(crystalUi.profile, 'pokemon-crystal', 'Expected pokemon-crystal Auto-Fight profile');
+    assert.equal(crystalUi.stopOnUncaught, true, 'Expected stopOnUncaught to default true');
+
+    // Switch rSVBK = 2, write sentinel garbage into WRAM bank 2 and valid Crystal Cherrygrove Heal Center state into WRAM bank 1
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._emulator_write_mem(emu.e, 0xff70, 2);
+        const ptr = emu.module._emulator_get_wram_ptr(emu.e);
+        const wram = emu.module.HEAPU8;
+        const wBank = (bank, addr, val) => {
+          wram[ptr + ((bank << 12) | (addr & 0x0fff))] = val;
+        };
+        // Bank 2 garbage sentinels
+        wBank(2, 0xd22d, 2);
+        wBank(2, 0xdcb5, 99);
+        wBank(2, 0xdcb6, 99);
+        wBank(2, 0xdcd7, 0);
+        // Bank 1 valid Cherrygrove PokéCenter (26, 5)
+        wBank(1, 0xd22d, 0);
+        wBank(1, 0xd230, 0);
+        wBank(1, 0xdcb5, 26);
+        wBank(1, 0xdcb6, 5);
+        wBank(1, 0xdcb7, 7);
+        wBank(1, 0xdcb8, 3);
+        wBank(1, 0xd199, 7);
+        wBank(1, 0xd19e, 4);
+        wBank(1, 0xd19f, 5);
+        wBank(1, 0xd84c, 0x01);
+        wBank(1, 0xdcd7, 1);
+        wBank(1, 0xdcd8, 158);
+        wBank(1, 0xdcdf + 0x00, 158);
+        wBank(1, 0xdcdf + 0x02, 55);
+        wBank(1, 0xdcdf + 0x17, 25);
+        wBank(1, 0xdcdf + 0x1f, 5);
+        wBank(1, 0xdcdf + 0x22, 0);
+        wBank(1, 0xdcdf + 0x23, 21);
+        wBank(1, 0xdcdf + 0x24, 0);
+        wBank(1, 0xdcdf + 0x25, 21);
+      })()
+    `);
+
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().inPokeCenter === true`),
+      6000,
+      30
+    );
+
+    const crystalCheck = await client.eval(`({
+      svbk: window.__retroIdle.getEmulator().readMem(0xff70) & 7,
+      bank2MapGroup: window.__retroIdle.getEmulator().readMem(0xdcb5),
+      profile: window.__retroIdle.getAutoFight().profile,
+      pokeCenterName: window.__retroIdle.getAutoFight().pokeCenterName,
+      healStatus: document.getElementById('heal-center-status').textContent,
+      snapshot: window.__retroIdle.getAutoFight().snapshot(),
+    })`);
+    assert.equal(crystalCheck.svbk, 2, 'Expected rSVBK to remain 2');
+    assert.equal(crystalCheck.bank2MapGroup, 99, 'Expected direct readMem(0xDCB5) to hit WRAM bank 2 sentinel');
+    assert.equal(crystalCheck.pokeCenterName, 'Cherrygrove Heal Center');
+    assert.match(crystalCheck.healStatus, /Heal Center visited: Cherrygrove Heal Center/);
+    assert.equal(crystalCheck.snapshot.mapGroup, 26);
+    assert.equal(crystalCheck.snapshot.mapNumber, 5);
+    assert.equal(crystalCheck.snapshot.x, 3);
+    assert.equal(crystalCheck.snapshot.y, 7);
+    assert.equal(crystalCheck.snapshot.tileset, 7);
+    assert.equal(crystalCheck.snapshot.partyCount, 1);
+    assert.equal(crystalCheck.snapshot.party[0].hp, 21);
+    assert.equal(crystalCheck.snapshot.party[0].moves[0], 55);
+    assert.equal(crystalCheck.snapshot.party[0].pp[0], 25);
+
+    // Inject shiny wild encounter into WRAM bank 1 and battleMon into WRAM bank 0 -> verify automatic shiny stop
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const ptr = emu.module._emulator_get_wram_ptr(emu.e);
+        const wram = emu.module.HEAPU8;
+        const wBank = (bank, addr, val) => {
+          wram[ptr + ((bank << 12) | (addr & 0x0fff))] = val;
+        };
+        wBank(1, 0xd22d, 1); // wBattleMode = wild
+        wBank(1, 0xd206 + 0x00, 16); // wEnemyMonSpecies = Pidgey
+        wBank(1, 0xd206 + 0x06, 0xea); // shiny DVs
+        wBank(1, 0xd206 + 0x07, 0xaa);
+        wBank(1, 0xd206 + 0x0d, 3);
+        wBank(1, 0xd206 + 0x10, 0);
+        wBank(1, 0xd206 + 0x11, 12);
+        wBank(1, 0xd206 + 0x12, 0);
+        wBank(1, 0xd206 + 0x13, 12);
+        wBank(0, 0xc62c + 0x00, 158);
+        wBank(0, 0xc62c + 0x02, 55);
+        wBank(0, 0xc62c + 0x08, 25);
+        wBank(0, 0xc62c + 0x0d, 5);
+        wBank(0, 0xc62c + 0x10, 0);
+        wBank(0, 0xc62c + 0x11, 21);
+        wBank(0, 0xc62c + 0x12, 0);
+        wBank(0, 0xc62c + 0x13, 21);
+      })()
+    `);
+    await client.eval(`document.getElementById('auto-fight-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'shiny encounter'`
+        ),
+      6000,
+      30
+    );
+    const shinyStopUi = await client.eval(`({
+      statusText: document.getElementById('auto-fight-status').textContent,
+      isError: document.getElementById('auto-fight-status').classList.contains('error'),
+    })`);
+    assert.equal(shinyStopUi.statusText, 'Auto-Fight stopped: shiny encounter');
+    assert.equal(shinyStopUi.isError, true);
+
+    // Toggle #stop-uncaught-btn off and back on
+    await client.eval(`document.getElementById('stop-uncaught-btn').click()`);
+    const uncaughtOff = await client.eval(`({
+      text: document.getElementById('stop-uncaught-btn').textContent,
+      pressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
+      activeClass: document.getElementById('stop-uncaught-btn').classList.contains('active'),
+      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(uncaughtOff.text, 'Fight: Uncaught');
+    assert.equal(uncaughtOff.pressed, 'false');
+    assert.equal(uncaughtOff.activeClass, false);
+    assert.equal(uncaughtOff.stopOnUncaught, false);
+    assert.notEqual(uncaughtOff.activeTag, 'BUTTON', 'Stop: Uncaught button must blur after click');
+
+    await client.eval(`document.getElementById('stop-uncaught-btn').click()`);
+    const uncaughtOn = await client.eval(`({
+      text: document.getElementById('stop-uncaught-btn').textContent,
+      pressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
+      activeClass: document.getElementById('stop-uncaught-btn').classList.contains('active'),
+      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
+    })`);
+    assert.equal(uncaughtOn.text, 'Stop: Uncaught');
+    assert.equal(uncaughtOn.pressed, 'true');
+    assert.equal(uncaughtOn.activeClass, true);
+    assert.equal(uncaughtOn.stopOnUncaught, true);
+
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(
       (e) =>
@@ -1175,6 +1363,13 @@ async function main() {
         profile: yellowCheck.profile,
         pokeCenterName: yellowCheck.pokeCenterName,
         healStatus: yellowCheck.healStatus,
+      },
+      crystalCheck: {
+        profile: crystalCheck.profile,
+        pokeCenterName: crystalCheck.pokeCenterName,
+        healStatus: crystalCheck.healStatus,
+        bank2MapGroup: crystalCheck.bank2MapGroup,
+        shinyStop: shinyStopUi.statusText,
       },
       mobileCheck: {
         portraitBottom: portraitLayout.gamepadBottom,

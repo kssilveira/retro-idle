@@ -1,15 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CRYSTAL_POKECENTER_CONFIGS,
   NEUTRAL_BUTTONS,
+  POKEMON_CRYSTAL_MEM,
   POKEMON_RED_BLUE_MEM,
   POKEMON_YELLOW_MEM,
   createAutoFight,
+  encodeCrystalMapId,
   getAutoFightProfile,
+  isGen2Shiny,
+  isGen2SpeciesCaught,
+  isPokemonCrystalTitle,
   isPokemonRedBlueTitle,
   isPokemonYellowTitle,
   isSupportedAutoFightTitle,
   pickAttackSlot,
+  readPokemonCrystalOverworldPos,
+  readPokemonCrystalSnapshot,
   readPokemonRedOverworldPos,
   readPokemonRedSnapshot,
   readPokemonYellowOverworldPos,
@@ -1746,4 +1754,605 @@ test('RAM-backed Pokémon Yellow round-trip Auto-Fight flow selects Thundershock
   assert.equal(res.active, true);
   assert.equal(res.phase, 'moving');
   assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 2 });
+});
+
+function createCrystalMemory() {
+  const ram = new Uint8Array(0x10000);
+  const mem = POKEMON_CRYSTAL_MEM;
+  const readMem = (addr) => ram[addr & 0xffff];
+  const write16 = (addr, val) => {
+    ram[addr] = (val >> 8) & 0xff;
+    ram[addr + 1] = val & 0xff;
+  };
+  const writeTileText = (row, col, text, tileMapAddr = mem.tileMap) => {
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      let code = 0x7f;
+      if (ch >= 'A' && ch <= 'Z') code = 0x80 + (ch.charCodeAt(0) - 65);
+      else if (ch >= 'a' && ch <= 'z') code = 0xa0 + (ch.charCodeAt(0) - 97);
+      else if (ch >= '0' && ch <= '9') code = 0xf6 + (ch.charCodeAt(0) - 48);
+      else if (ch === '/') code = 0xf3;
+      else if (ch === '?') code = 0xe6;
+      else if (ch === '!') code = 0xe7;
+      ram[tileMapAddr + row * 20 + col + i] = code;
+    }
+  };
+  const clearTileMap = (tileMapAddr = mem.tileMap) => {
+    ram.fill(0x7f, tileMapAddr, tileMapAddr + 18 * 20);
+  };
+  const writePartyMon = (idx, mon) => {
+    ram[mem.partySpecies + idx] = mon.isEgg ? 0xfd : mon.species;
+    const base = mem.partyMon1 + idx * 0x30;
+    ram[base] = mon.species;
+    for (let i = 0; i < 4; i++) {
+      ram[base + 0x02 + i] = mon.moves?.[i] ?? 0;
+      ram[base + 0x17 + i] = mon.pp?.[i] ?? 0;
+    }
+    ram[base + 0x1f] = mon.level ?? 0;
+    write16(base + 0x22, mon.hp ?? 0);
+    write16(base + 0x24, mon.maxHp ?? 0);
+  };
+  const writeBattleMon = (mon) => {
+    const base = mem.battleMon;
+    ram[base] = mon.species ?? 0;
+    for (let i = 0; i < 4; i++) {
+      ram[base + 0x02 + i] = mon.moves?.[i] ?? 0;
+      ram[base + 0x08 + i] = mon.pp?.[i] ?? 0;
+    }
+    ram[base + 0x0d] = mon.level ?? 0;
+    write16(base + 0x10, mon.hp ?? 0);
+    write16(base + 0x12, mon.maxHp ?? 0);
+  };
+  const writeEnemyMon = (mon) => {
+    const base = mem.enemyMon;
+    ram[base] = mon.species ?? 0;
+    ram[base + 0x06] = mon.dvs?.[0] ?? 0;
+    ram[base + 0x07] = mon.dvs?.[1] ?? 0;
+    ram[base + 0x0d] = mon.level ?? 0;
+    write16(base + 0x10, mon.hp ?? 0);
+    write16(base + 0x12, mon.maxHp ?? 0);
+  };
+  const setCaught = (species, caught = true) => {
+    const bitIndex = species - 1;
+    const addr = mem.pokedexCaught + (bitIndex >> 3);
+    const mask = 1 << (bitIndex & 7);
+    if (caught) ram[addr] |= mask;
+    else ram[addr] &= ~mask;
+  };
+  const setOverworld = ({
+    mapGroup,
+    mapNumber,
+    x,
+    y,
+    tileset = 1,
+    mapWidth = 20,
+    mapHeight = 18,
+    facing = 0x00,
+    stepType = 0x04,
+    battleMode = 0,
+    battleType = 0,
+    hasPokedex = true,
+  }) => {
+    ram[mem.battleMode] = battleMode;
+    ram[mem.battleType] = battleType;
+    ram[mem.mapGroup] = mapGroup;
+    ram[mem.mapNumber] = mapNumber;
+    ram[mem.yCoord] = y;
+    ram[mem.xCoord] = x;
+    ram[mem.curMapTileset] = tileset;
+    ram[mem.curMapHeight] = mapHeight / 2;
+    ram[mem.curMapWidth] = mapWidth / 2;
+    ram[mem.playerDirection] = facing;
+    ram[mem.playerStepType] = stepType;
+    ram[mem.statusFlags] = hasPokedex ? 0x01 : 0x00;
+  };
+  return {
+    ram,
+    mem,
+    readMem,
+    write16,
+    writeTileText,
+    clearTileMap,
+    writePartyMon,
+    writeBattleMon,
+    writeEnemyMon,
+    setCaught,
+    setOverworld,
+  };
+}
+
+test('getAutoFightProfile and isPokemonCrystalTitle recognize PM_CRYSTAL and POKEMON CRYSTAL without colliding with Gen 1', () => {
+  assert.equal(isPokemonCrystalTitle('PM_CRYSTAL'), true);
+  assert.equal(isPokemonCrystalTitle(' pm_crystal '), true);
+  assert.equal(isPokemonCrystalTitle('POKEMON CRYSTAL'), true);
+  assert.equal(isPokemonCrystalTitle('POKEMON YELLOW'), false);
+  assert.equal(isPokemonCrystalTitle('POKEMON RED'), false);
+  assert.equal(isPokemonYellowTitle('PM_CRYSTAL'), false);
+  assert.equal(isPokemonRedBlueTitle('PM_CRYSTAL'), false);
+  assert.equal(isSupportedAutoFightTitle('PM_CRYSTAL'), true);
+  assert.equal(isSupportedAutoFightTitle('POKEMON CRYSTAL'), true);
+
+  const crystal = getAutoFightProfile(' pm_crystal ');
+  assert.ok(crystal);
+  assert.equal(crystal.id, 'pokemon-crystal');
+  assert.equal(crystal.name, 'Pokémon Crystal');
+  assert.equal(crystal.mem, POKEMON_CRYSTAL_MEM);
+  assert.equal(crystal.supportsShinyStop, true);
+  assert.equal(crystal.supportsUncaughtStop, true);
+  assert.equal(crystal.pokeCenterConfigs, CRYSTAL_POKECENTER_CONFIGS);
+  assert.equal(Object.keys(CRYSTAL_POKECENTER_CONFIGS).length, 22);
+});
+
+test('isGen2Shiny and isGen2SpeciesCaught evaluate Gen 2 DVs and Pokédex bitfields accurately', () => {
+  // Valid shiny Attack DVs: 2,3,6,7,10,11,14,15; Def=10, Spd=10, Spc=10
+  for (const atk of [2, 3, 6, 7, 10, 11, 14, 15]) {
+    assert.equal(isGen2Shiny((atk << 4) | 0x0a, 0xaa), true, `Expected atk=${atk} shiny`);
+  }
+  // Non-shiny Attack DVs: 0,1,4,5,8,9,12,13
+  for (const atk of [0, 1, 4, 5, 8, 9, 12, 13]) {
+    assert.equal(isGen2Shiny((atk << 4) | 0x0a, 0xaa), false, `Expected atk=${atk} non-shiny`);
+  }
+  // Wrong Def, Spd, or Spc nibble
+  assert.equal(isGen2Shiny(0xab, 0xaa), false);
+  assert.equal(isGen2Shiny(0xaa, 0xba), false);
+  assert.equal(isGen2Shiny(0xaa, 0xab), false);
+
+  const mem = createCrystalMemory();
+  mem.setCaught(1, true);   // Bulbasaur -> byte 0 bit 0
+  mem.setCaught(152, true); // Chikorita -> byte 18 bit 7
+  mem.setCaught(251, true); // Celebi -> byte 31 bit 2
+
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 1), true);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 2), false);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 152), true);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 153), false);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 251), true);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 250), false);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 0), true);
+  assert.equal(isGen2SpeciesCaught(mem.readMem, 252), true);
+});
+
+test('pickAttackSlot skips Gen 2 non-attack/conditional moves while picking Gen 2 attacking moves', () => {
+  // False Swipe (206), Perish Song (195), Snore (173), Protect (182) -> all skipped
+  assert.equal(pickAttackSlot([206, 195, 173, 182], [40, 5, 15, 10]), -1);
+  // Charm (204), Baton Pass (226), Mirror Coat (243), Belly Drum (187) -> all skipped
+  assert.equal(pickAttackSlot([204, 226, 243, 187], [20, 40, 20, 10]), -1);
+  // Pain Split (220), Curse (174), Crunch (242) -> selects Crunch (slot 2)
+  assert.equal(pickAttackSlot([220, 174, 242, 0], [20, 10, 15, 0]), 2);
+  // Flame Wheel (172), Return (216), Hidden Power (237)
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 20, 15]), 2);
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 25, 0, 0]), 1);
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 0, 15]), 3);
+});
+
+test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 WRAM, Eggs, jumps, Disabled box, and enemy status', () => {
+  const cm = createCrystalMemory();
+  cm.setOverworld({
+    mapGroup: 26,
+    mapNumber: 3,
+    x: 12,
+    y: 9,
+    tileset: 1,
+    mapWidth: 40,
+    mapHeight: 18,
+    facing: 0x0c,
+    stepType: 0x09, // STEP_TYPE_PLAYER_JUMP
+    battleMode: 1,
+    battleType: 0,
+    hasPokedex: true,
+  });
+  cm.ram[cm.mem.partyCount] = 2;
+  cm.writePartyMon(0, {
+    species: 175, // Togepi inside Egg (0xFD in wPartySpecies)
+    isEgg: true,
+    hp: 0,
+    maxHp: 0,
+    level: 1,
+    moves: [45, 204, 0, 0],
+    pp: [40, 20, 0, 0],
+  });
+  cm.writePartyMon(1, {
+    species: 158, // Totodile
+    hp: 21,
+    maxHp: 23,
+    level: 6,
+    moves: [10, 43, 55, 0],
+    pp: [35, 30, 0x40 | 20, 0],
+  });
+  cm.writeBattleMon({
+    species: 158,
+    moves: [10, 43, 55, 0],
+    pp: [35, 30, 20, 0],
+    level: 6,
+    hp: 21,
+    maxHp: 23,
+  });
+  cm.writeEnemyMon({
+    species: 16, // Pidgey (uncaught)
+    dvs: [0xea, 0xaa], // shiny!
+    level: 3,
+    hp: 14,
+    maxHp: 14,
+  });
+
+  cm.clearTileMap();
+  cm.writeTileText(14, 10, 'FIGHT');
+  cm.writeTileText(16, 16, 'RUN');
+  cm.ram[cm.mem.tileMap + 14 * 20 + 9] = 0xed;
+
+  const pos = readPokemonCrystalOverworldPos(cm.readMem);
+  assert.deepEqual(pos, {
+    isInBattle: 1,
+    map: encodeCrystalMapId(26, 3),
+    mapGroup: 26,
+    mapNumber: 3,
+    y: 9,
+    x: 12,
+    tileset: 1,
+    mapHeight: 18,
+    mapWidth: 40,
+    partyCount: 2,
+    facing: 0x0c,
+    movementFlags: 0x40,
+  });
+
+  const snap = readPokemonCrystalSnapshot(cm.readMem);
+  assert.equal(snap.hasPokedex, true);
+  assert.equal(snap.party[0].isEgg, true);
+  assert.equal(snap.party[0].hp, 0);
+  assert.equal(snap.party[1].isEgg, false);
+  assert.equal(snap.party[1].species, 158);
+  assert.equal(snap.party[1].pp[2], 20);
+  assert.equal(snap.battleMon.hp, 21);
+  assert.equal(snap.battleMon.maxHp, 23);
+  assert.equal(snap.enemyMon.species, 16);
+  assert.equal(snap.enemyMon.shiny, true);
+  assert.equal(snap.enemyMon.caught, false);
+  assert.deepEqual(snap.fightPos, { row: 14, col: 10 });
+  assert.equal(snap.hasRun, true);
+  assert.deepEqual(snap.cursorPos, { row: 14, col: 9 });
+
+  // Disabled move info box triggers hasTypeBox
+  cm.clearTileMap();
+  cm.writeTileText(10, 1, 'Disabled!');
+  cm.ram[cm.mem.tileMap + 13 * 20 + 5] = 0xed;
+  const disabledSnap = readPokemonCrystalSnapshot(cm.readMem);
+  assert.equal(disabledSnap.hasTypeBox, true);
+  assert.deepEqual(disabledSnap.cursorPos, { row: 13, col: 5 });
+});
+
+test('Crystal shiny and uncaught encounter stops honor Pokédex, tutorial, toggle, ambush, and Ditto transform rules', () => {
+  const cm = createCrystalMemory();
+  const profile = getAutoFightProfile('PM_CRYSTAL');
+
+  const setupRoute30 = () => {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
+    cm.ram[cm.mem.partyCount] = 1;
+    cm.writePartyMon(0, {
+      species: 158,
+      hp: 21,
+      maxHp: 21,
+      level: 5,
+      moves: [10, 55, 0, 0],
+      pp: [35, 25, 0, 0],
+    });
+  };
+
+  // 1. Shiny wild mon stops immediately even when stopOnUncaught=false and species is caught
+  setupRoute30();
+  cm.setCaught(16, true);
+  const afShiny = createAutoFight({ stopOnUncaught: false });
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  afShiny.start(profile.readSnapshot(cm.readMem));
+
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, battleMode: 1 });
+  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 5, hp: 21, maxHp: 21 });
+  cm.writeEnemyMon({ species: 16, dvs: [0x2a, 0xaa], level: 3, hp: 14, maxHp: 14 });
+  let res = afShiny.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'shiny encounter');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+
+  // 2. Uncaught wild mon stops when hasPokedex=true & stopOnUncaught=true, including during returning ambush (and preserves trail)
+  const afUncaught = createAutoFight();
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
+  afUncaught.observe(profile.readOverworldPos(cm.readMem));
+  cm.setOverworld({ mapGroup: 26, mapNumber: 3, x: 29, y: 4, tileset: 1, mapWidth: 40, mapHeight: 18 });
+  afUncaught.observe(profile.readOverworldPos(cm.readMem));
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  afUncaught.observe(profile.readOverworldPos(cm.readMem));
+
+  // Start out of PP -> returning, then ambushed by uncaught & shiny Sentret (161) -> must NOT flee!
+  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 5, moves: [10, 55, 0, 0], pp: [0, 0, 0, 0] });
+  afUncaught.start(profile.readSnapshot(cm.readMem));
+  res = afUncaught.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'returning');
+
+  cm.setCaught(161, false);
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, battleMode: 1 });
+  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [0, 0, 0, 0], level: 5, hp: 21, maxHp: 21 });
+  cm.writeEnemyMon({ species: 161, dvs: [0x12, 0x34], level: 3, hp: 14, maxHp: 14 });
+  res = afUncaught.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'uncaught encounter');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+  assert.equal(afUncaught.getState().hasHealPath, true);
+
+  // 3. Does NOT stop for uncaught when hasPokedex=false, battleType=BATTLETYPE_TUTORIAL (3), or stopOnUncaught=false
+  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 5, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
+  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 5, hp: 21, maxHp: 21 });
+
+  for (const scenario of [
+    { hasPokedex: false, battleType: 0, stopOnUncaught: true },
+    { hasPokedex: true, battleType: 3, stopOnUncaught: true },
+    { hasPokedex: true, battleType: 0, stopOnUncaught: false },
+  ]) {
+    const afSkip = createAutoFight({ stopOnUncaught: scenario.stopOnUncaught });
+    cm.setOverworld({
+      mapGroup: 26,
+      mapNumber: 1,
+      x: 8,
+      y: 20,
+      tileset: 1,
+      battleMode: 0,
+      battleType: scenario.battleType,
+      hasPokedex: scenario.hasPokedex,
+    });
+    afSkip.start(profile.readSnapshot(cm.readMem));
+    cm.setOverworld({
+      mapGroup: 26,
+      mapNumber: 1,
+      x: 8,
+      y: 20,
+      tileset: 1,
+      battleMode: 1,
+      battleType: scenario.battleType,
+      hasPokedex: scenario.hasPokedex,
+    });
+    cm.writeEnemyMon({ species: 161, dvs: [0x12, 0x34], level: 3, hp: 14, maxHp: 14 });
+    const out = afSkip.step(profile.readSnapshot(cm.readMem));
+    assert.equal(out.active, true, `Should keep fighting for ${JSON.stringify(scenario)}`);
+  }
+
+  // 4. Wild Ditto transforming into shiny DVs on turn 2 must NOT false-trigger 'shiny encounter'
+  const afDitto = createAutoFight();
+  cm.setCaught(132, true);
+  cm.setOverworld({ mapGroup: 10, mapNumber: 5, x: 5, y: 5, tileset: 1, battleMode: 0, hasPokedex: true });
+  afDitto.start(profile.readSnapshot(cm.readMem));
+  cm.setOverworld({ mapGroup: 10, mapNumber: 5, x: 5, y: 5, tileset: 1, battleMode: 1, hasPokedex: true });
+  cm.writeEnemyMon({ species: 132, dvs: [0x12, 0x34], level: 10, hp: 25, maxHp: 25 });
+  assert.equal(afDitto.step(profile.readSnapshot(cm.readMem)).active, true);
+  // Turn 2: Ditto uses Transform and copies player's shiny DVs
+  cm.writeEnemyMon({ species: 132, dvs: [0xea, 0xaa], level: 10, hp: 25, maxHp: 25 });
+  assert.equal(afDitto.step(profile.readSnapshot(cm.readMem)).active, true);
+});
+
+test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg + Indigo Plateau + Crystal ledge)', () => {
+  const profile = getAutoFightProfile('PM_CRYSTAL');
+  const cm = createCrystalMemory();
+  const af = createAutoFight();
+
+  // Party: Totodile + Mystery Egg (0xFD)
+  cm.ram[cm.mem.partyCount] = 2;
+  cm.writePartyMon(0, {
+    species: 158,
+    hp: 21,
+    maxHp: 21,
+    level: 6,
+    moves: [43, 206, 55, 0], // Leer (non-attack), False Swipe (non-KO), Water Gun (attack)
+    pp: [30, 40, 25, 0],
+  });
+  cm.writePartyMon(1, {
+    species: 175,
+    isEgg: true,
+    hp: 0,
+    maxHp: 0,
+    level: 1,
+    moves: [45, 0, 0, 0],
+    pp: [40, 0, 0, 0],
+  });
+  cm.setCaught(16, true); // Pidgey already caught
+
+  // 1. Visit Cherrygrove Heal Center (26, 5) -> Cherrygrove City (26, 3) -> Route 30 (26, 1)
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
+  af.observe(profile.readOverworldPos(cm.readMem));
+  assert.equal(af.getState().pokeCenterName, 'Cherrygrove Heal Center');
+
+  for (const [x, y] of [
+    [29, 4],
+    [29, 3],
+    [29, 2],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
+    af.observe(profile.readOverworldPos(cm.readMem));
+  }
+  for (const [x, y] of [
+    [8, 53],
+    [8, 52],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 1, x, y, tileset: 1, mapWidth: 20, mapHeight: 54 });
+    af.observe(profile.readOverworldPos(cm.readMem));
+  }
+  assert.equal(af.getState().hasHealPath, true);
+
+  // 2. Start Auto-Fight on Route 30 -> caught Pidgey -> select FIGHT -> Water Gun (slot 2)
+  af.start(profile.readSnapshot(cm.readMem));
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'moving');
+
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
+  cm.writeBattleMon({
+    species: 158,
+    moves: [43, 206, 55, 0],
+    pp: [30, 40, 25, 0],
+    level: 6,
+    hp: 21,
+    maxHp: 21,
+  });
+  cm.writeEnemyMon({ species: 16, dvs: [0x11, 0x22], level: 3, hp: 14, maxHp: 14 });
+  cm.clearTileMap();
+  cm.writeTileText(14, 10, 'FIGHT');
+  cm.writeTileText(16, 16, 'RUN');
+  cm.ram[cm.mem.tileMap + 14 * 20 + 9] = 0xed;
+
+  let res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'fighting');
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 16; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  // Move selection: skip Leer (0) and False Swipe (1) -> down x2 -> A on Water Gun (2)
+  cm.clearTileMap();
+  cm.writeTileText(9, 1, 'TYPE/');
+  cm.ram[cm.mem.tileMap + 13 * 20 + 5] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.buttons.down, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  cm.ram[cm.mem.tileMap + 13 * 20 + 5] = 0x7f;
+  cm.ram[cm.mem.tileMap + 14 * 20 + 5] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.buttons.down, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  cm.ram[cm.mem.tileMap + 14 * 20 + 5] = 0x7f;
+  cm.ram[cm.mem.tileMap + 15 * 20 + 5] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 14; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  // 3. Water Gun PP hits 0 -> flee to RUN -> return to Cherrygrove Heal Center
+  cm.ram[cm.mem.battleMon + 0x0a] = 0;
+  cm.ram[cm.mem.partyMon1 + 0x19] = 0;
+  cm.clearTileMap();
+  cm.writeTileText(14, 10, 'FIGHT');
+  cm.writeTileText(16, 16, 'RUN');
+  cm.ram[cm.mem.tileMap + 14 * 20 + 9] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'fleeing');
+  assert.equal(res.buttons.down, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
+  cm.ram[cm.mem.tileMap + 14 * 20 + 9] = 0x7f;
+  cm.ram[cm.mem.tileMap + 16 * 20 + 9] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.buttons.right, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
+  cm.ram[cm.mem.tileMap + 16 * 20 + 9] = 0x7f;
+  cm.ram[cm.mem.tileMap + 16 * 20 + 15] = 0xed;
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 16; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  // Walk back to Cherrygrove Heal Center
+  cm.clearTileMap();
+  for (const [x, y] of [
+    [8, 52],
+    [8, 53],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 1, x, y, tileset: 1, mapWidth: 20, mapHeight: 54 });
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'returning');
+  }
+  for (const [x, y] of [
+    [29, 2],
+    [29, 3],
+    [29, 4],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'returning');
+  }
+
+  // Enter Cherrygrove PokéCenter at right mat (4, 7) -> align x=3 -> walk to (3, 3) -> talk -> Egg does NOT block allFullHp!
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 4, y: 7, tileset: 7, facing: 0x04 });
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'healing');
+  assert.equal(res.buttons.left, true);
+
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 3, tileset: 7, facing: 0x04 });
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(af.getState().healSubphase, 'talking_nurse');
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 12; i++) af.step(profile.readSnapshot(cm.readMem));
+
+  cm.ram[cm.mem.partyMon1 + 0x19] = 25; // Water Gun PP healed (Egg stays hp=0, maxHp=0)
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(af.getState().healSubphase, 'closing_dialogue');
+  assert.equal(res.buttons.b, true);
+  for (let i = 0; i < 8; i++) {
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).buttons.a, false);
+  }
+
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 4, tileset: 7, facing: 0x00 });
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(af.getState().healSubphase, 'exiting');
+  assert.equal(res.buttons.down, true);
+
+  for (const [x, y] of [
+    [29, 4],
+    [29, 3],
+    [29, 2],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'walking_back');
+  }
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'walking_back');
+
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'moving');
+  assert.deepEqual(af.getState().anchor, { map: encodeCrystalMapId(26, 1), x: 8, y: 52 });
+
+  // 4. Indigo Plateau Heal Center (16, 2) coords (standX=3, standY=9, exitX=5, exitY=13) + Crystal ledge fast stop
+  const afIndigo = createAutoFight();
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 13, tileset: 7, mapWidth: 18, mapHeight: 14 });
+  afIndigo.observe(profile.readOverworldPos(cm.readMem));
+  assert.equal(afIndigo.getState().pokeCenterName, 'Indigo Plateau Heal Center');
+  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 6, tileset: 3, mapWidth: 20, mapHeight: 18 });
+  afIndigo.observe(profile.readOverworldPos(cm.readMem));
+  // Single-tile Crystal ledge jump (playerStepType = 0x09)
+  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 7, tileset: 3, stepType: 0x09 });
+  afIndigo.observe(profile.readOverworldPos(cm.readMem));
+  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 8, tileset: 3, stepType: 0x04 });
+  afIndigo.observe(profile.readOverworldPos(cm.readMem));
+  assert.equal(afIndigo.exportTrail().trail[1].oneWay, true);
+
+  cm.ram[cm.mem.partyMon1 + 0x19] = 0;
+  afIndigo.start(profile.readSnapshot(cm.readMem));
+  afIndigo.step(profile.readSnapshot(cm.readMem));
+  // Blocked at ledge (9, 7) -> stops on 45th stuck frame
+  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 7, tileset: 3 });
+  afIndigo.step(profile.readSnapshot(cm.readMem));
+  for (let i = 0; i < 44; i++) {
+    assert.equal(afIndigo.step(profile.readSnapshot(cm.readMem)).active, true);
+  }
+  const ledgeStop = afIndigo.step(profile.readSnapshot(cm.readMem));
+  assert.equal(ledgeStop.active, false);
+  assert.match(ledgeStop.stopReason, /one-way/i);
+
+  // Verify Indigo Plateau nurse & exit navigation directly
+  const afIndigoCenter = createAutoFight();
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 13, tileset: 7, mapWidth: 18, mapHeight: 14 });
+  afIndigoCenter.observe(profile.readOverworldPos(cm.readMem));
+  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 6, tileset: 3, mapWidth: 20, mapHeight: 18 });
+  afIndigoCenter.observe(profile.readOverworldPos(cm.readMem));
+  afIndigoCenter.start(profile.readSnapshot(cm.readMem));
+  afIndigoCenter.step(profile.readSnapshot(cm.readMem));
+  // Enter Indigo Plateau PokéCenter at (5, 13) -> steers left to x=3, then up to y=9
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 13, tileset: 7, facing: 0x04 });
+  res = afIndigoCenter.step(profile.readSnapshot(cm.readMem));
+  assert.equal(res.phase, 'healing');
+  assert.equal(res.buttons.left, true);
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 3, y: 13, tileset: 7, facing: 0x04 });
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.up, true);
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 3, y: 9, tileset: 7, facing: 0x04 });
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.a, true);
+  for (let i = 0; i < 12; i++) afIndigoCenter.step(profile.readSnapshot(cm.readMem));
+  cm.ram[cm.mem.partyMon1 + 0x19] = 25;
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.b, true);
+  for (let i = 0; i < 8; i++) afIndigoCenter.step(profile.readSnapshot(cm.readMem));
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 3, y: 10, tileset: 7, facing: 0x00 });
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.down, true);
+  assert.equal(afIndigoCenter.getState().healSubphase, 'exiting');
+  // Exiting aligns exitX=5 before walking down to exitY=13
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.right, true);
+  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 10, tileset: 7, facing: 0x00 });
+  assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.down, true);
 });

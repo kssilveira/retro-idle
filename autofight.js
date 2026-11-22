@@ -9,12 +9,15 @@ export const NEUTRAL_BUTTONS = Object.freeze({
   select: false,
 });
 
-// Non-damaging, flee, self-KO, or conditional-fail Gen 1 move IDs.
+// Non-damaging, flee, self-KO, or conditional-fail Gen 1 & Gen 2 move IDs.
 export const NON_ATTACK_MOVES = new Set([
   14, 18, 28, 39, 43, 45, 46, 47, 48, 50, 54, 73, 74, 77, 78, 79, 81, 86, 92,
   95, 96, 97, 100, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113,
   114, 115, 116, 118, 119, 120, 133, 134, 135, 137, 138, 139, 142, 144, 147,
   148, 150, 151, 153, 156, 159, 160, 164,
+  166, 169, 170, 171, 173, 174, 176, 178, 180, 182, 184, 186, 187, 191, 193,
+  194, 195, 197, 199, 201, 203, 204, 206, 207, 208, 212, 213, 214, 215, 219,
+  220, 226, 227, 230, 234, 235, 236, 240, 241, 243, 244,
 ]);
 
 const LEARN_PROMPT_RE = /\blearn|trying to|Delete an|forgotten/;
@@ -56,6 +59,32 @@ export const POKEMON_YELLOW_MEM = Object.freeze({
   movementFlags: 0xd735,
 });
 
+export const POKEMON_CRYSTAL_MEM = Object.freeze({
+  tileMap: 0xc4a0,          // WRAM0: 20x18 tilemap
+  battleMon: 0xc62c,        // WRAM0: battle_struct (0x20 bytes)
+  curMapTileset: 0xd199,    // WRAM1: wMapTileset (TILESET_POKECENTER = 7)
+  curMapHeight: 0xd19e,     // WRAM1: wMapHeight (in blocks; *2 = tiles)
+  curMapWidth: 0xd19f,      // WRAM1: wMapWidth (in blocks; *2 = tiles)
+  enemyMon: 0xd206,         // WRAM1: wEnemyMon battle_struct (0x20 bytes)
+  battleMode: 0xd22d,       // WRAM1: wBattleMode (0=overworld, 1=wild, 2=trainer)
+  battleType: 0xd230,       // WRAM1: wBattleType (3=BATTLETYPE_TUTORIAL)
+  playerDirection: 0xd4de,  // WRAM1: wPlayerStruct + 0x08 (0=down, 4=up, 8=left, 12=right)
+  playerStepType: 0xd4df,   // WRAM1: wPlayerStruct + 0x09 (0x09 = STEP_TYPE_PLAYER_JUMP)
+  statusFlags: 0xd84c,      // WRAM1: wStatusFlags (bit 0 = STATUSFLAGS_POKEDEX_F)
+  mapGroup: 0xdcb5,         // WRAM1: wMapGroup (1..26)
+  mapNumber: 0xdcb6,        // WRAM1: wMapNumber
+  yCoord: 0xdcb7,           // WRAM1: wYCoord
+  xCoord: 0xdcb8,           // WRAM1: wXCoord
+  partyCount: 0xdcd7,       // WRAM1: wPartyCount (0..6)
+  partySpecies: 0xdcd8,     // WRAM1: wPartySpecies (6 bytes; 0xFD = EGG)
+  partyMon1: 0xdcdf,        // WRAM1: wPartyMon1 (party_struct, stride 0x30)
+  pokedexCaught: 0xde99,    // WRAM1: wPokedexCaught (32 bytes, bit = species - 1)
+});
+
+const CRYSTAL_EGG_SPECIES = 0xfd;
+const CRYSTAL_STEP_TYPE_PLAYER_JUMP = 0x09;
+const CRYSTAL_BATTLETYPE_TUTORIAL = 0x03;
+
 const STANDARD_POKECENTER_CONFIG = Object.freeze({
   standX: 3,
   standY: 3,
@@ -90,6 +119,59 @@ export const POKECENTER_CONFIGS = Object.freeze({
   0xb6: makeStandardPokeCenter('Saffron Heal Center'),
 });
 
+export function encodeCrystalMapId(mapGroup, mapNumber) {
+  return ((mapGroup & 0xff) << 8) | (mapNumber & 0xff);
+}
+
+const CRYSTAL_STANDARD_POKECENTER_CONFIG = Object.freeze({
+  standX: 3,
+  standY: 3,
+  exitX: 3,
+  exitY: 7,
+  tileset: 7,
+});
+
+function makeCrystalStandardPokeCenter(name) {
+  return Object.freeze({ ...CRYSTAL_STANDARD_POKECENTER_CONFIG, name });
+}
+
+export const CRYSTAL_POKECENTER_CONFIGS = Object.freeze({
+  [encodeCrystalMapId(1, 1)]: makeCrystalStandardPokeCenter('Olivine Heal Center'),
+  [encodeCrystalMapId(2, 3)]: makeCrystalStandardPokeCenter('Mahogany Heal Center'),
+  [encodeCrystalMapId(4, 3)]: makeCrystalStandardPokeCenter('Ecruteak Heal Center'),
+  [encodeCrystalMapId(5, 6)]: makeCrystalStandardPokeCenter('Blackthorn Heal Center'),
+  [encodeCrystalMapId(6, 1)]: makeCrystalStandardPokeCenter('Cinnabar Heal Center'),
+  [encodeCrystalMapId(7, 4)]: makeCrystalStandardPokeCenter('Cerulean Heal Center'),
+  [encodeCrystalMapId(7, 8)]: makeCrystalStandardPokeCenter('Route 10 Heal Center'),
+  [encodeCrystalMapId(8, 1)]: makeCrystalStandardPokeCenter('Azalea Heal Center'),
+  [encodeCrystalMapId(10, 10)]: makeCrystalStandardPokeCenter('Violet Heal Center'),
+  [encodeCrystalMapId(10, 13)]: makeCrystalStandardPokeCenter('Route 32 Heal Center'),
+  [encodeCrystalMapId(11, 20)]: makeCrystalStandardPokeCenter('Goldenrod Heal Center'),
+  [encodeCrystalMapId(12, 5)]: makeCrystalStandardPokeCenter('Vermilion Heal Center'),
+  [encodeCrystalMapId(14, 6)]: makeCrystalStandardPokeCenter('Pewter Heal Center'),
+  [encodeCrystalMapId(16, 2)]: Object.freeze({
+    standX: 3,
+    standY: 9,
+    exitX: 5,
+    exitY: 13,
+    tileset: 7,
+    name: 'Indigo Plateau Heal Center',
+  }),
+  [encodeCrystalMapId(17, 10)]: makeCrystalStandardPokeCenter('Fuchsia Heal Center'),
+  [encodeCrystalMapId(18, 5)]: makeCrystalStandardPokeCenter('Lavender Heal Center'),
+  [encodeCrystalMapId(19, 3)]: makeCrystalStandardPokeCenter('Mt. Silver Heal Center'),
+  [encodeCrystalMapId(21, 17)]: makeCrystalStandardPokeCenter('Celadon Heal Center'),
+  [encodeCrystalMapId(22, 6)]: makeCrystalStandardPokeCenter('Cianwood Heal Center'),
+  [encodeCrystalMapId(23, 9)]: makeCrystalStandardPokeCenter('Viridian Heal Center'),
+  [encodeCrystalMapId(25, 6)]: makeCrystalStandardPokeCenter('Saffron Heal Center'),
+  [encodeCrystalMapId(26, 5)]: makeCrystalStandardPokeCenter('Cherrygrove Heal Center'),
+});
+
+const ALL_POKECENTER_CONFIGS = Object.freeze({
+  ...POKECENTER_CONFIGS,
+  ...CRYSTAL_POKECENTER_CONFIGS,
+});
+
 const FACING_TO_DIR = Object.freeze({
   0x00: 'down',
   0x04: 'up',
@@ -115,7 +197,22 @@ const OUT_OF_PP_MISSING_POKECENTER_REASON =
   'out of PP (missing Heal Center path — visit a Heal Center first)';
 
 export function isPokeCenterMap(mapId) {
-  return Object.hasOwn(POKECENTER_CONFIGS, mapId);
+  return Object.hasOwn(ALL_POKECENTER_CONFIGS, mapId);
+}
+
+export function isGen2Shiny(dv0, dv1) {
+  return (dv0 & 0x2f) === 0x2a && (dv1 & 0xff) === 0xaa;
+}
+
+export function isGen2SpeciesCaught(
+  readMem,
+  species,
+  pokedexCaughtAddr = POKEMON_CRYSTAL_MEM.pokedexCaught
+) {
+  if (species < 1 || species > 251) return true;
+  const bitIndex = species - 1;
+  const byte = readMem(pokedexCaughtAddr + (bitIndex >> 3)) & 0xff;
+  return Boolean(byte & (1 << (bitIndex & 7)));
 }
 
 export function pickAttackSlot(moves, pp) {
@@ -154,6 +251,72 @@ export function readPokemonGen1OverworldPos(readMem, mem = POKEMON_RED_BLUE_MEM)
     partyCount: Math.min(r(mem.partyCount), 6),
     facing: r(mem.facing),
     movementFlags: r(mem.movementFlags),
+  };
+}
+
+function readBattleTilemap(r, tileMapAddr, { matchDisabled = false } = {}) {
+  const readTileRow = (row) => {
+    let s = '';
+    const start = tileMapAddr + row * 20;
+    for (let c = 0; c < 20; c++) {
+      s += decodeGen1Char(r(start + c));
+    }
+    return s;
+  };
+
+  const moveInfoRows = [];
+  for (let row = 8; row <= 11; row++) {
+    moveInfoRows.push(readTileRow(row));
+  }
+  const moveInfoText = moveInfoRows.join(' ');
+  const hasTypeBox =
+    moveInfoText.includes('TYPE') || (matchDisabled && moveInfoText.includes('Disabled!'));
+
+  const menuBoxRows = [];
+  for (let row = 12; row <= 17; row++) {
+    menuBoxRows.push(readTileRow(row));
+  }
+  const menuBoxText = menuBoxRows.join(' ');
+
+  let fightPos = null;
+  let runPos = null;
+  for (let row = 12; row <= 17; row++) {
+    const rowText = menuBoxRows[row - 12];
+    if (!fightPos) {
+      const col = rowText.indexOf('FIGHT');
+      if (col !== -1) fightPos = { row, col };
+    }
+    if (!runPos) {
+      const col = rowText.indexOf('RUN');
+      if (col !== -1) runPos = { row, col };
+    }
+  }
+  const hasRun = Boolean(runPos);
+
+  let cursorPos = null;
+  for (let row = 12; row <= 17; row++) {
+    const rowAddr = tileMapAddr + row * 20;
+    for (let col = 0; col < 20; col++) {
+      if (r(rowAddr + col) === TILE_CURSOR) {
+        if (!cursorPos) cursorPos = { row, col };
+        if (hasTypeBox && col === 5) {
+          cursorPos = { row, col };
+          row = 18;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    hasTypeBox,
+    menuBoxRows,
+    menuBoxText,
+    fightPos,
+    runPos,
+    hasRun,
+    cursorPos,
+    moveFirstRow: MOVE_FIRST_ROW,
   };
 }
 
@@ -205,59 +368,7 @@ export function readPokemonGen1Snapshot(readMem, mem = POKEMON_RED_BLUE_MEM) {
   };
 
   const enemyHp = r16(mem.enemyHp);
-
-  const tileMapAddr = mem.tileMap;
-  const readTileRow = (row) => {
-    let s = '';
-    const start = tileMapAddr + row * 20;
-    for (let c = 0; c < 20; c++) {
-      s += decodeGen1Char(r(start + c));
-    }
-    return s;
-  };
-
-  const moveInfoRows = [];
-  for (let row = 8; row <= 11; row++) {
-    moveInfoRows.push(readTileRow(row));
-  }
-  const moveInfoText = moveInfoRows.join(' ');
-  const hasTypeBox = moveInfoText.includes('TYPE');
-
-  const menuBoxRows = [];
-  for (let row = 12; row <= 17; row++) {
-    menuBoxRows.push(readTileRow(row));
-  }
-  const menuBoxText = menuBoxRows.join(' ');
-
-  let fightPos = null;
-  let runPos = null;
-  for (let row = 12; row <= 17; row++) {
-    const rowText = menuBoxRows[row - 12];
-    if (!fightPos) {
-      const col = rowText.indexOf('FIGHT');
-      if (col !== -1) fightPos = { row, col };
-    }
-    if (!runPos) {
-      const col = rowText.indexOf('RUN');
-      if (col !== -1) runPos = { row, col };
-    }
-  }
-  const hasRun = Boolean(runPos);
-
-  let cursorPos = null;
-  for (let row = 12; row <= 17; row++) {
-    const rowAddr = tileMapAddr + row * 20;
-    for (let col = 0; col < 20; col++) {
-      if (r(rowAddr + col) === TILE_CURSOR) {
-        if (!cursorPos) cursorPos = { row, col };
-        if (hasTypeBox && col === 5) {
-          cursorPos = { row, col };
-          row = 18;
-          break;
-        }
-      }
-    }
-  }
+  const tileMenus = readBattleTilemap(r, mem.tileMap);
 
   return {
     isInBattle,
@@ -273,14 +384,122 @@ export function readPokemonGen1Snapshot(readMem, mem = POKEMON_RED_BLUE_MEM) {
     party,
     battleMon,
     enemyHp,
-    hasTypeBox,
-    menuBoxRows,
-    menuBoxText,
-    fightPos,
-    runPos,
-    hasRun,
-    cursorPos,
-    moveFirstRow: MOVE_FIRST_ROW,
+    ...tileMenus,
+  };
+}
+
+export function readPokemonCrystalOverworldPos(readMem, mem = POKEMON_CRYSTAL_MEM) {
+  const r = (addr) => readMem(addr) & 0xff;
+  const mapGroup = r(mem.mapGroup);
+  const mapNumber = r(mem.mapNumber);
+  return {
+    isInBattle: r(mem.battleMode),
+    map: encodeCrystalMapId(mapGroup, mapNumber),
+    mapGroup,
+    mapNumber,
+    y: r(mem.yCoord),
+    x: r(mem.xCoord),
+    tileset: r(mem.curMapTileset),
+    mapHeight: r(mem.curMapHeight) * 2,
+    mapWidth: r(mem.curMapWidth) * 2,
+    partyCount: Math.min(r(mem.partyCount), 6),
+    facing: r(mem.playerDirection),
+    movementFlags: r(mem.playerStepType) === CRYSTAL_STEP_TYPE_PLAYER_JUMP ? 0x40 : 0,
+  };
+}
+
+export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
+  const r = (addr) => readMem(addr) & 0xff;
+  const r16 = (addr) => (r(addr) << 8) | r(addr + 1);
+
+  const pos = readPokemonCrystalOverworldPos(readMem, mem);
+  const party = [];
+  for (let i = 0; i < pos.partyCount; i++) {
+    const listSpecies = r(mem.partySpecies + i);
+    if (listSpecies === CRYSTAL_EGG_SPECIES) {
+      party.push({
+        species: CRYSTAL_EGG_SPECIES,
+        isEgg: true,
+        hp: 0,
+        maxHp: 0,
+        level: 0,
+        moves: [0, 0, 0, 0],
+        pp: [0, 0, 0, 0],
+      });
+      continue;
+    }
+    const base = mem.partyMon1 + i * 0x30;
+    party.push({
+      species: r(base),
+      isEgg: false,
+      hp: r16(base + 0x22),
+      maxHp: r16(base + 0x24),
+      level: r(base + 0x1f),
+      moves: [r(base + 0x02), r(base + 0x03), r(base + 0x04), r(base + 0x05)],
+      pp: [
+        r(base + 0x17) & 0x3f,
+        r(base + 0x18) & 0x3f,
+        r(base + 0x19) & 0x3f,
+        r(base + 0x1a) & 0x3f,
+      ],
+    });
+  }
+
+  const bBase = mem.battleMon;
+  const battleMon = {
+    species: r(bBase),
+    moves: [r(bBase + 0x02), r(bBase + 0x03), r(bBase + 0x04), r(bBase + 0x05)],
+    pp: [
+      r(bBase + 0x08) & 0x3f,
+      r(bBase + 0x09) & 0x3f,
+      r(bBase + 0x0a) & 0x3f,
+      r(bBase + 0x0b) & 0x3f,
+    ],
+    level: r(bBase + 0x0d),
+    hp: r16(bBase + 0x10),
+    maxHp: r16(bBase + 0x12),
+  };
+
+  const eBase = mem.enemyMon;
+  const battleType = r(mem.battleType);
+  const hasPokedex = Boolean(r(mem.statusFlags) & 0x01);
+  const enemySpecies = r(eBase);
+  const enemyDv0 = r(eBase + 0x06);
+  const enemyDv1 = r(eBase + 0x07);
+  const enemyLevel = r(eBase + 0x0d);
+  const enemyHp = r16(eBase + 0x10);
+  const enemyMaxHp = r16(eBase + 0x12);
+  const enemyReady =
+    pos.isInBattle === 1 &&
+    battleType !== CRYSTAL_BATTLETYPE_TUTORIAL &&
+    enemySpecies >= 1 &&
+    enemySpecies <= 251 &&
+    enemyMaxHp > 0 &&
+    enemyHp > 0;
+  const enemyMon = {
+    species: enemySpecies,
+    level: enemyLevel,
+    hp: enemyHp,
+    maxHp: enemyMaxHp,
+    dvs: [enemyDv0, enemyDv1],
+    shiny: enemyReady && isGen2Shiny(enemyDv0, enemyDv1),
+    caught:
+      !hasPokedex ||
+      !enemyReady ||
+      isGen2SpeciesCaught(readMem, enemySpecies, mem.pokedexCaught),
+  };
+
+  const tileMenus = readBattleTilemap(r, mem.tileMap, { matchDisabled: true });
+
+  return {
+    ...pos,
+    battleType,
+    hasPokedex,
+    party,
+    battleMon,
+    enemyMon,
+    enemyHp,
+    ...tileMenus,
   };
 }
 
@@ -324,10 +543,23 @@ const POKEMON_YELLOW_PROFILE = Object.freeze({
   readSnapshot: readPokemonYellowSnapshot,
 });
 
+const POKEMON_CRYSTAL_PROFILE = Object.freeze({
+  id: 'pokemon-crystal',
+  name: 'Pokémon Crystal',
+  mem: POKEMON_CRYSTAL_MEM,
+  pokeCenterConfigs: CRYSTAL_POKECENTER_CONFIGS,
+  supportsShinyStop: true,
+  supportsUncaughtStop: true,
+  readOverworldPos: readPokemonCrystalOverworldPos,
+  readSnapshot: readPokemonCrystalSnapshot,
+});
+
 const AUTO_FIGHT_PROFILES = Object.freeze({
   'POKEMON RED': POKEMON_RED_PROFILE,
   'POKEMON BLUE': POKEMON_BLUE_PROFILE,
   'POKEMON YELLOW': POKEMON_YELLOW_PROFILE,
+  'PM_CRYSTAL': POKEMON_CRYSTAL_PROFILE,
+  'POKEMON CRYSTAL': POKEMON_CRYSTAL_PROFILE,
 });
 
 export function getAutoFightProfile(title) {
@@ -345,6 +577,10 @@ export function isPokemonYellowTitle(title) {
 
 export function isPokemonRedBlueTitle(title) {
   return getAutoFightProfile(title)?.id === 'pokemon-red-blue';
+}
+
+export function isPokemonCrystalTitle(title) {
+  return getAutoFightProfile(title)?.id === 'pokemon-crystal';
 }
 
 function sumPartyPp(party) {
@@ -394,7 +630,7 @@ function isValidOverworldCoord(snap) {
   return true;
 }
 
-export function createAutoFight() {
+export function createAutoFight(options = {}) {
   let active = false;
   let phase = 'idle';
   let stopReason = null;
@@ -402,6 +638,8 @@ export function createAutoFight() {
   let initialParty = [];
   let wasInBattle = false;
   let battleMonReady = false;
+  let stopOnUncaught = Boolean(options.stopOnUncaught ?? true);
+  let encounterChecked = false;
   let dirIndex = 0;
   let atAnchorFrames = 0;
   let returnStuckFrames = 0;
@@ -617,7 +855,7 @@ export function createAutoFight() {
 
     if (isPokeCenterMap(snap.map)) {
       pokeCenterMap = snap.map;
-      pokeCenterTileset = POKECENTER_CONFIGS[snap.map].tileset;
+      pokeCenterTileset = ALL_POKECENTER_CONFIGS[snap.map].tileset;
       trail = [];
       wasInPokeCenter = true;
       pendingWarpSnapFrames = 0;
@@ -766,7 +1004,7 @@ export function createAutoFight() {
     if (wasActive && pokeCenterMap !== null) {
       if (prevPhase === 'healing') {
         wasInPokeCenter = true;
-        pokeCenterTileset = POKECENTER_CONFIGS[pokeCenterMap]?.tileset ?? pokeCenterTileset;
+        pokeCenterTileset = ALL_POKECENTER_CONFIGS[pokeCenterMap]?.tileset ?? pokeCenterTileset;
         trail = [];
         pendingWarpSnapFrames = 0;
         warpStartTileset = null;
@@ -800,9 +1038,11 @@ export function createAutoFight() {
     anchor = { map: snap.map, x: snap.x, y: snap.y };
     initialParty = (snap.party || []).map((m) => ({
       species: m.species,
+      isEgg: Boolean(m.isEgg),
       moves: [...m.moves],
     }));
     wasInBattle = snap.isInBattle === 1;
+    encounterChecked = false;
     battleMonReady =
       snap.isInBattle === 1 &&
       snap.battleMon.maxHp > 0 &&
@@ -893,7 +1133,7 @@ export function createAutoFight() {
   }
 
   function stepHealing(snap, party) {
-    const lead = party.find((m) => m.hp > 0);
+    const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
     }
@@ -924,7 +1164,7 @@ export function createAutoFight() {
       return neutral();
     }
 
-    const cfg = POKECENTER_CONFIGS[pokeCenterMap];
+    const cfg = ALL_POKECENTER_CONFIGS[pokeCenterMap];
 
     if (healSubphase === 'to_nurse') {
       if (snap.tileset !== undefined && snap.tileset !== cfg.tileset) {
@@ -953,7 +1193,8 @@ export function createAutoFight() {
     }
 
     if (healSubphase === 'talking_nurse') {
-      const allFullHp = party.length > 0 && party.every((m) => m.hp === m.maxHp);
+      const allFullHp =
+        party.some((m) => !m.isEgg) && party.every((m) => m.isEgg || m.hp === m.maxHp);
       const hasAttackPp = pickAttackSlot(lead.moves, lead.pp) !== -1;
       const curPp = sumPartyPp(party);
       const curHp = sumPartyHp(party);
@@ -1004,7 +1245,7 @@ export function createAutoFight() {
   }
 
   function stepReturning(snap, party) {
-    const lead = party.find((m) => m.hp > 0);
+    const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
     }
@@ -1104,7 +1345,7 @@ export function createAutoFight() {
   }
 
   function stepWalkingBack(snap, party) {
-    const lead = party.find((m) => m.hp > 0);
+    const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
     }
@@ -1186,7 +1427,7 @@ export function createAutoFight() {
   }
 
   function stepMoving(snap, party) {
-    const lead = party.find((m) => m.hp > 0);
+    const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
     }
@@ -1266,7 +1507,7 @@ export function createAutoFight() {
     for (let i = 0; i < initialParty.length && i < party.length; i++) {
       const cur = party[i];
       const init = initialParty[i];
-      if (cur.species !== 0 && cur.species === init.species) {
+      if (!cur.isEgg && !init.isEgg && cur.species !== 0 && cur.species === init.species) {
         for (let k = 0; k < 4; k++) {
           if (cur.moves[k] !== init.moves[k]) {
             return stop('learning a move');
@@ -1288,6 +1529,7 @@ export function createAutoFight() {
       if (wasInBattle) {
         wasInBattle = false;
         battleMonReady = false;
+        encounterChecked = false;
         pulse = null;
         cooldown = 0;
         atAnchorFrames = 0;
@@ -1320,10 +1562,27 @@ export function createAutoFight() {
     if (!wasInBattle) {
       wasInBattle = true;
       battleMonReady = false;
+      encounterChecked = false;
       pulse = null;
       cooldown = 0;
       if (isValidOverworldCoord(snap)) {
         lastPos = { map: snap.map, x: snap.x, y: snap.y };
+      }
+    }
+
+    if (
+      !encounterChecked &&
+      snap.enemyMon &&
+      snap.enemyMon.species > 0 &&
+      snap.enemyMon.maxHp > 0 &&
+      snap.enemyMon.hp > 0
+    ) {
+      encounterChecked = true;
+      if (snap.enemyMon.shiny) {
+        return stop('shiny encounter');
+      }
+      if (stopOnUncaught && snap.enemyMon.caught === false) {
+        return stop('uncaught encounter');
       }
     }
 
@@ -1418,6 +1677,9 @@ export function createAutoFight() {
     clearTrail,
     exportTrail,
     importTrail,
+    setStopOnUncaught: (val) => {
+      stopOnUncaught = Boolean(val);
+    },
     getState: () => ({
       active,
       phase,
@@ -1425,11 +1687,12 @@ export function createAutoFight() {
       anchor,
       pokeCenterMap,
       pokeCenterName:
-        pokeCenterMap !== null ? POKECENTER_CONFIGS[pokeCenterMap]?.name ?? null : null,
+        pokeCenterMap !== null ? ALL_POKECENTER_CONFIGS[pokeCenterMap]?.name ?? null : null,
       inPokeCenter: wasInPokeCenter,
       hasHealPath: hasHealPath(active ? anchor?.map : prevOverworld?.map ?? anchor?.map),
       trailLength: trail.length,
       healSubphase,
+      stopOnUncaught,
     }),
   };
 }
