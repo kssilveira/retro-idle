@@ -2,9 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NEUTRAL_BUTTONS,
+  POKEMON_RED_BLUE_MEM,
+  POKEMON_YELLOW_MEM,
   createAutoFight,
+  getAutoFightProfile,
   isPokemonRedBlueTitle,
+  isPokemonYellowTitle,
+  isSupportedAutoFightTitle,
   pickAttackSlot,
+  readPokemonRedOverworldPos,
+  readPokemonRedSnapshot,
+  readPokemonYellowOverworldPos,
+  readPokemonYellowSnapshot,
 } from '../autofight.js';
 
 function makeSnapshot(overrides = {}) {
@@ -1303,4 +1312,438 @@ test('redundant stop() while inactive preserves trail/inPokeCenter and hasHealPa
   af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x04, movementFlags: 0 });
   assert.equal(af.getState().trailLength, 2);
   assert.equal(af.getState().hasHealPath, true);
+});
+
+function createGen1Memory() {
+  const ram = new Uint8Array(0x10000);
+  const readMem = (addr) => ram[addr & 0xffff];
+  const write16 = (addr, val) => {
+    ram[addr] = (val >> 8) & 0xff;
+    ram[addr + 1] = val & 0xff;
+  };
+  const writeTileText = (row, col, text, tileMapAddr = 0xc3a0) => {
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      let code = 0x7f;
+      if (ch >= 'A' && ch <= 'Z') code = 0x80 + (ch.charCodeAt(0) - 65);
+      else if (ch >= 'a' && ch <= 'z') code = 0xa0 + (ch.charCodeAt(0) - 97);
+      else if (ch >= '0' && ch <= '9') code = 0xf6 + (ch.charCodeAt(0) - 48);
+      else if (ch === '/') code = 0xf3;
+      else if (ch === '?') code = 0xe6;
+      else if (ch === '!') code = 0xe7;
+      ram[tileMapAddr + row * 20 + col + i] = code;
+    }
+  };
+  const clearTileMap = (tileMapAddr = 0xc3a0) => {
+    ram.fill(0x7f, tileMapAddr, tileMapAddr + 18 * 20);
+  };
+  const writePartyMon = (mem, idx, mon) => {
+    const base = mem.partyMon1 + idx * 0x2c;
+    ram[base] = mon.species;
+    write16(base + 0x01, mon.hp);
+    for (let i = 0; i < 4; i++) {
+      ram[base + 0x08 + i] = mon.moves[i] ?? 0;
+      ram[base + 0x1d + i] = mon.pp[i] ?? 0;
+    }
+    ram[base + 0x21] = mon.level;
+    write16(base + 0x22, mon.maxHp);
+  };
+  const writeBattleMon = (mem, mon) => {
+    const base = mem.battleMon;
+    write16(base + 0x01, mon.hp);
+    for (let i = 0; i < 4; i++) {
+      ram[base + 0x08 + i] = mon.moves[i] ?? 0;
+      ram[base + 0x19 + i] = mon.pp[i] ?? 0;
+    }
+    ram[base + 0x0e] = mon.level;
+    write16(base + 0x0f, mon.maxHp);
+  };
+  return { ram, readMem, write16, writeTileText, clearTileMap, writePartyMon, writeBattleMon };
+}
+
+test('getAutoFightProfile and title helpers distinguish Red/Blue, Yellow, and unsupported ROMs', () => {
+  assert.equal(isPokemonYellowTitle('POKEMON YELLOW'), true);
+  assert.equal(isPokemonYellowTitle(' pokemon yellow '), true);
+  assert.equal(isPokemonYellowTitle('POKEMON RED'), false);
+  assert.equal(isPokemonRedBlueTitle('POKEMON YELLOW'), false);
+  assert.equal(isSupportedAutoFightTitle('POKEMON YELLOW'), true);
+  assert.equal(isSupportedAutoFightTitle('POKEMON RED'), true);
+  assert.equal(isSupportedAutoFightTitle('POKEMON BLUE'), true);
+  assert.equal(isSupportedAutoFightTitle('MBC3 TEST'), false);
+  assert.equal(isSupportedAutoFightTitle(''), false);
+
+  const yellow = getAutoFightProfile(' pokemon yellow ');
+  assert.ok(yellow);
+  assert.equal(yellow.id, 'pokemon-yellow');
+  assert.equal(yellow.name, 'Pokémon Yellow');
+  assert.equal(yellow.mem, POKEMON_YELLOW_MEM);
+
+  const red = getAutoFightProfile('POKEMON RED');
+  assert.ok(red);
+  assert.equal(red.id, 'pokemon-red-blue');
+  assert.equal(red.name, 'Pokémon Red');
+  assert.equal(red.mem, POKEMON_RED_BLUE_MEM);
+
+  const blue = getAutoFightProfile('POKEMON BLUE');
+  assert.ok(blue);
+  assert.equal(blue.id, 'pokemon-red-blue');
+  assert.equal(blue.name, 'Pokémon Blue');
+
+  assert.equal(getAutoFightProfile('TETRIS'), null);
+});
+
+test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM offsets and tilemap menus', () => {
+  // 1. Pokémon Yellow memory buffer with distinct sentinels on Red/Blue shifted addresses
+  const yMem = createGen1Memory();
+  yMem.ram[0xd056] = 1; // wIsInBattle (Yellow)
+  yMem.ram[0xd057] = 2; // sentinel (Red/Blue wIsInBattle)
+  yMem.ram[0xd35d] = 12; // wCurMap (Yellow)
+  yMem.ram[0xd35e] = 99; // sentinel
+  yMem.ram[0xd360] = 7; // wYCoord (Yellow)
+  yMem.ram[0xd361] = 11; // wXCoord (Yellow)
+  yMem.ram[0xd362] = 99; // sentinel
+  yMem.ram[0xd366] = 3; // wCurMapTileset (Yellow)
+  yMem.ram[0xd367] = 18; // wCurMapHeight (Yellow) -> 36
+  yMem.ram[0xd368] = 10; // wCurMapWidth (Yellow) -> 20
+  yMem.ram[0xd369] = 99; // sentinel
+  yMem.ram[0xd735] = 0x40; // wd736 (Yellow)
+  yMem.ram[0xd736] = 0x00; // sentinel
+  yMem.ram[0xc109] = 0x08; // shared facing left
+  yMem.ram[0xd162] = 2; // wPartyCount (Yellow)
+  yMem.ram[0xd163] = 6; // sentinel
+  yMem.writePartyMon(POKEMON_YELLOW_MEM, 0, {
+    species: 0x54, // Pikachu
+    hp: 24,
+    maxHp: 28,
+    level: 8,
+    moves: [84, 45, 0, 0], // Thundershock, Growl
+    pp: [0x40 | 29, 40, 0, 0],
+  });
+  yMem.writePartyMon(POKEMON_YELLOW_MEM, 1, {
+    species: 0x24, // Pidgey
+    hp: 15,
+    maxHp: 19,
+    level: 5,
+    moves: [16, 28, 0, 0],
+    pp: [35, 15, 0, 0],
+  });
+  yMem.writeBattleMon(POKEMON_YELLOW_MEM, {
+    hp: 24,
+    maxHp: 28,
+    level: 8,
+    moves: [84, 45, 0, 0],
+    pp: [29, 40, 0, 0],
+  });
+  yMem.write16(0xcfe5, 13); // wEnemyMonHP (Yellow)
+
+  yMem.clearTileMap();
+  yMem.writeTileText(14, 10, 'FIGHT');
+  yMem.writeTileText(16, 16, 'RUN');
+  yMem.ram[0xc3a0 + 14 * 20 + 9] = 0xed;
+
+  const yPos = readPokemonYellowOverworldPos(yMem.readMem);
+  assert.deepEqual(yPos, {
+    isInBattle: 1,
+    map: 12,
+    y: 7,
+    x: 11,
+    tileset: 3,
+    mapHeight: 36,
+    mapWidth: 20,
+    partyCount: 2,
+    facing: 0x08,
+    movementFlags: 0x40,
+  });
+
+  const ySnapBattle = readPokemonYellowSnapshot(yMem.readMem);
+  assert.equal(ySnapBattle.isInBattle, 1);
+  assert.equal(ySnapBattle.map, 12);
+  assert.equal(ySnapBattle.x, 11);
+  assert.equal(ySnapBattle.y, 7);
+  assert.equal(ySnapBattle.tileset, 3);
+  assert.equal(ySnapBattle.mapHeight, 36);
+  assert.equal(ySnapBattle.mapWidth, 20);
+  assert.equal(ySnapBattle.movementFlags, 0x40);
+  assert.equal(ySnapBattle.partyCount, 2);
+  assert.deepEqual(ySnapBattle.party[0], {
+    species: 0x54,
+    hp: 24,
+    maxHp: 28,
+    level: 8,
+    moves: [84, 45, 0, 0],
+    pp: [29, 40, 0, 0],
+  });
+  assert.deepEqual(ySnapBattle.party[1], {
+    species: 0x24,
+    hp: 15,
+    maxHp: 19,
+    level: 5,
+    moves: [16, 28, 0, 0],
+    pp: [35, 15, 0, 0],
+  });
+  assert.deepEqual(ySnapBattle.battleMon, {
+    hp: 24,
+    maxHp: 28,
+    level: 8,
+    moves: [84, 45, 0, 0],
+    pp: [29, 40, 0, 0],
+  });
+  assert.equal(ySnapBattle.enemyHp, 13);
+  assert.equal(ySnapBattle.hasTypeBox, false);
+  assert.deepEqual(ySnapBattle.fightPos, { row: 14, col: 10 });
+  assert.deepEqual(ySnapBattle.runPos, { row: 16, col: 16 });
+  assert.equal(ySnapBattle.hasRun, true);
+  assert.deepEqual(ySnapBattle.cursorPos, { row: 14, col: 9 });
+
+  yMem.clearTileMap();
+  yMem.writeTileText(9, 2, 'TYPE/');
+  yMem.ram[0xc3a0 + 13 * 20 + 5] = 0xed;
+  const ySnapMove = readPokemonYellowSnapshot(yMem.readMem);
+  assert.equal(ySnapMove.hasTypeBox, true);
+  assert.deepEqual(ySnapMove.cursorPos, { row: 13, col: 5 });
+
+  // 2. Red/Blue memory buffer verifies unbreaking POKEMON_RED_BLUE_MEM offsets
+  const rMem = createGen1Memory();
+  rMem.ram[0xd057] = 1;
+  rMem.ram[0xd35e] = 3;
+  rMem.ram[0xd361] = 14;
+  rMem.ram[0xd362] = 9;
+  rMem.ram[0xd367] = 0;
+  rMem.ram[0xd368] = 18;
+  rMem.ram[0xd369] = 20;
+  rMem.ram[0xd736] = 0x80;
+  rMem.ram[0xc109] = 0x04;
+  rMem.ram[0xd163] = 1;
+  rMem.writePartyMon(POKEMON_RED_BLUE_MEM, 0, {
+    species: 176,
+    hp: 31,
+    maxHp: 35,
+    level: 10,
+    moves: [10, 45, 52, 0],
+    pp: [35, 40, 22, 0],
+  });
+  rMem.writeBattleMon(POKEMON_RED_BLUE_MEM, {
+    hp: 31,
+    maxHp: 35,
+    level: 10,
+    moves: [10, 45, 52, 0],
+    pp: [35, 40, 22, 0],
+  });
+  rMem.write16(0xcfe6, 17);
+  rMem.clearTileMap();
+  rMem.writeTileText(9, 2, 'TYPE/');
+  rMem.ram[0xc3a0 + 14 * 20 + 5] = 0xed;
+
+  const rPos = readPokemonRedOverworldPos(rMem.readMem);
+  assert.deepEqual(rPos, {
+    isInBattle: 1,
+    map: 3,
+    y: 14,
+    x: 9,
+    tileset: 0,
+    mapHeight: 36,
+    mapWidth: 40,
+    partyCount: 1,
+    facing: 0x04,
+    movementFlags: 0x80,
+  });
+
+  const rSnap = readPokemonRedSnapshot(rMem.readMem);
+  assert.equal(rSnap.enemyHp, 17);
+  assert.equal(rSnap.party[0].species, 176);
+  assert.equal(rSnap.battleMon.hp, 31);
+  assert.equal(rSnap.hasTypeBox, true);
+  assert.deepEqual(rSnap.cursorPos, { row: 14, col: 5 });
+});
+
+test('RAM-backed Pokémon Yellow round-trip Auto-Fight flow selects Thundershock, flees out-of-PP, heals at Viridian, and returns', () => {
+  const profile = getAutoFightProfile('POKEMON YELLOW');
+  assert.ok(profile);
+  const { ram, readMem, writeTileText, clearTileMap, writePartyMon, writeBattleMon } =
+    createGen1Memory();
+  const af = createAutoFight();
+
+  const setOverworld = ({ map, x, y, tileset, mapWidth, mapHeight, facing = 0x00, flags = 0 }) => {
+    ram[0xd056] = 0;
+    ram[0xd35d] = map;
+    ram[0xd361] = x;
+    ram[0xd360] = y;
+    ram[0xd366] = tileset;
+    ram[0xd367] = mapHeight / 2;
+    ram[0xd368] = mapWidth / 2;
+    ram[0xc109] = facing;
+    ram[0xd735] = flags;
+  };
+
+  ram[0xd162] = 1;
+  writePartyMon(profile.mem, 0, {
+    species: 0x54, // Pikachu
+    hp: 22,
+    maxHp: 22,
+    level: 6,
+    moves: [45, 84, 0, 0], // Growl (non-attack), Thundershock
+    pp: [40, 30, 0, 0],
+  });
+
+  // 1. Observe Viridian PokéCenter -> exit to Viridian -> walk to Route 1
+  setOverworld({ map: 0x29, x: 3, y: 7, tileset: 6, mapWidth: 14, mapHeight: 8, facing: 0x00 });
+  af.observe(profile.readOverworldPos(readMem));
+  assert.equal(af.getState().pokeCenterName, 'Viridian Heal Center');
+
+  for (const [x, y] of [
+    [23, 25],
+    [23, 26],
+    [23, 27],
+  ]) {
+    setOverworld({ map: 1, x, y, tileset: 0, mapWidth: 40, mapHeight: 36, facing: 0x00 });
+    af.observe(profile.readOverworldPos(readMem));
+  }
+  for (const [x, y] of [
+    [10, 0],
+    [10, 1],
+    [10, 2],
+  ]) {
+    setOverworld({ map: 12, x, y, tileset: 0, mapWidth: 20, mapHeight: 36, facing: 0x00 });
+    af.observe(profile.readOverworldPos(readMem));
+  }
+  assert.equal(af.getState().hasHealPath, true);
+
+  // 2. Start Auto-Fight on Route 1
+  af.start(profile.readSnapshot(readMem));
+  let res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'moving');
+
+  // 3. Wild battle: select FIGHT, then skip Growl (slot 0) to pick Thundershock (slot 1)
+  ram[0xd056] = 1;
+  writeBattleMon(profile.mem, {
+    hp: 22,
+    maxHp: 22,
+    level: 6,
+    moves: [45, 84, 0, 0],
+    pp: [40, 30, 0, 0],
+  });
+  clearTileMap();
+  writeTileText(14, 10, 'FIGHT');
+  writeTileText(16, 16, 'RUN');
+  ram[0xc3a0 + 14 * 20 + 9] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.phase, 'fighting');
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 16; i++) af.step(profile.readSnapshot(readMem));
+
+  // Move selection menu: cursor starts at slot 0 (Growl) -> moves down to slot 1 (Thundershock) -> presses A
+  clearTileMap();
+  writeTileText(9, 2, 'TYPE/');
+  ram[0xc3a0 + 13 * 20 + 5] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.buttons.down, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(readMem));
+
+  clearTileMap();
+  writeTileText(9, 2, 'TYPE/');
+  ram[0xc3a0 + 14 * 20 + 5] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 14; i++) af.step(profile.readSnapshot(readMem));
+
+  // 4. Out of Thundershock PP on main battle menu -> flees to RUN and returns to Viridian Heal Center
+  ram[0xd02d] = 0; // battleMon slot 1 PP = 0
+  ram[0xd188] = 0; // partyMon1 slot 1 PP = 0
+  clearTileMap();
+  writeTileText(14, 10, 'FIGHT');
+  writeTileText(16, 16, 'RUN');
+  ram[0xc3a0 + 14 * 20 + 9] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.phase, 'fleeing');
+  assert.equal(res.buttons.down, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(readMem));
+
+  ram[0xc3a0 + 14 * 20 + 9] = 0x7f;
+  ram[0xc3a0 + 16 * 20 + 9] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.buttons.right, true);
+  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(readMem));
+
+  ram[0xc3a0 + 16 * 20 + 9] = 0x7f;
+  ram[0xc3a0 + 16 * 20 + 15] = 0xed;
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 16; i++) af.step(profile.readSnapshot(readMem));
+
+  // 5. Overworld return path back to Viridian Heal Center
+  clearTileMap();
+  for (const [x, y] of [
+    [10, 2],
+    [10, 1],
+    [10, 0],
+  ]) {
+    setOverworld({ map: 12, x, y, tileset: 0, mapWidth: 20, mapHeight: 36 });
+    res = af.step(profile.readSnapshot(readMem));
+    assert.equal(res.phase, 'returning');
+    assert.equal(res.buttons.up, true);
+  }
+  for (const [x, y] of [
+    [23, 27],
+    [23, 26],
+    [23, 25],
+  ]) {
+    setOverworld({ map: 1, x, y, tileset: 0, mapWidth: 40, mapHeight: 36 });
+    res = af.step(profile.readSnapshot(readMem));
+    assert.equal(res.phase, 'returning');
+    assert.equal(res.buttons.up, true);
+  }
+
+  // 6. Heal at Viridian PokéCenter (align x before y, face up, talk, close dialogue without pressing A, exit)
+  setOverworld({ map: 0x29, x: 4, y: 7, tileset: 6, mapWidth: 14, mapHeight: 8, facing: 0x04 });
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.phase, 'healing');
+  assert.equal(res.buttons.left, true);
+
+  setOverworld({ map: 0x29, x: 3, y: 3, tileset: 6, mapWidth: 14, mapHeight: 8, facing: 0x04 });
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(af.getState().healSubphase, 'talking_nurse');
+  assert.equal(res.buttons.a, true);
+  for (let i = 0; i < 12; i++) af.step(profile.readSnapshot(readMem));
+
+  ram[0xd188] = 30; // Healed!
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(af.getState().healSubphase, 'closing_dialogue');
+  assert.equal(res.buttons.b, true);
+  assert.equal(res.buttons.a, false);
+  for (let i = 0; i < 8; i++) {
+    const mid = af.step(profile.readSnapshot(readMem));
+    assert.equal(mid.buttons.a, false);
+  }
+
+  setOverworld({ map: 0x29, x: 3, y: 4, tileset: 6, mapWidth: 14, mapHeight: 8, facing: 0x00 });
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(af.getState().healSubphase, 'exiting');
+  assert.equal(res.buttons.down, true);
+
+  // 7. Exit and walk back to grind spot (12, 10, 2)
+  for (const [x, y] of [
+    [23, 25],
+    [23, 26],
+    [23, 27],
+  ]) {
+    setOverworld({ map: 1, x, y, tileset: 0, mapWidth: 40, mapHeight: 36 });
+    res = af.step(profile.readSnapshot(readMem));
+    assert.equal(res.phase, 'walking_back');
+    assert.equal(res.buttons.down, true);
+  }
+  for (const [x, y] of [
+    [10, 0],
+    [10, 1],
+  ]) {
+    setOverworld({ map: 12, x, y, tileset: 0, mapWidth: 20, mapHeight: 36 });
+    res = af.step(profile.readSnapshot(readMem));
+    assert.equal(res.phase, 'walking_back');
+    assert.equal(res.buttons.down, true);
+  }
+  setOverworld({ map: 12, x: 10, y: 2, tileset: 0, mapWidth: 20, mapHeight: 36 });
+  res = af.step(profile.readSnapshot(readMem));
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'moving');
+  assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 2 });
 });

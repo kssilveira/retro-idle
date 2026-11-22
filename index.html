@@ -236,7 +236,7 @@
       <button type="button" id="export-sav-btn" disabled>Export .sav</button>
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
-      <button type="button" id="auto-fight-btn" disabled title="Pokémon Red/Blue only">Auto-Fight</button>
+      <button type="button" id="auto-fight-btn" disabled title="Pokémon Red / Blue / Yellow">Auto-Fight</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
 
@@ -268,9 +268,7 @@
   <script type="module">
     import {
       createAutoFight,
-      isPokemonRedBlueTitle,
-      readPokemonRedOverworldPos,
-      readPokemonRedSnapshot,
+      getAutoFightProfile,
     } from './autofight.js';
 
     const SCREEN_WIDTH = 160;
@@ -379,6 +377,7 @@
     let pipHiddenPauseTimer = 0;
 
     const autoFight = createAutoFight();
+    let currentAutoFightProfile = null;
     let lastAutoFightText = '';
     let lastAutoFightIsError = false;
     let lastHealCenterText = '';
@@ -852,7 +851,7 @@
     }
 
     function syncHealCenterStatus() {
-      const supported = Boolean(emu) && isPokemonRedBlueTitle(currentRomTitle);
+      const supported = Boolean(emu && currentAutoFightProfile);
       if (!supported) {
         if (lastHealCenterText !== '' || lastHealCenterLinked !== false || !healCenterStatusEl.hidden) {
           lastHealCenterText = '';
@@ -929,7 +928,7 @@
       pipUi.togglePlayBtn.disabled = !loaded || isBusy;
       pipUi.togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
 
-      const pokemonSupported = loaded && isPokemonRedBlueTitle(currentRomTitle);
+      const pokemonSupported = loaded && Boolean(currentAutoFightProfile);
       const autoActive = autoFight.getState().active;
       pipUi.autoFightBtn.hidden = !pokemonSupported;
       pipUi.autoFightBtn.disabled = !pokemonSupported || isBusy;
@@ -960,7 +959,7 @@
     }
 
     function syncAutoFightButton() {
-      const supported = Boolean(emu) && isPokemonRedBlueTitle(currentRomTitle);
+      const supported = Boolean(emu && currentAutoFightProfile);
       const active = autoFight.getState().active;
       autoFightBtn.disabled = !supported || isBusy;
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
@@ -993,8 +992,8 @@
     }
 
     function stepAutoFight() {
-      if (!emu || !autoFight.getState().active) return;
-      const snap = readPokemonRedSnapshot((a) => emu.readMem(a));
+      if (!emu || !currentAutoFightProfile || !autoFight.getState().active) return;
+      const snap = currentAutoFightProfile.readSnapshot((a) => emu.readMem(a));
       const res = autoFight.step(snap);
       if (!res.active) {
         stopAutoFight(res.stopReason);
@@ -1005,22 +1004,22 @@
     }
 
     function onEmulatorFrame() {
-      if (!emu || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      if (!emu || !currentAutoFightProfile) return;
       if (autoFight.getState().active) {
         stepAutoFight();
       } else {
-        autoFight.observe(readPokemonRedOverworldPos((a) => emu.readMem(a)));
+        autoFight.observe(currentAutoFightProfile.readOverworldPos((a) => emu.readMem(a)));
       }
       syncHealCenterStatus();
     }
 
     function startAutoFight() {
-      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      if (!emu || isBusy || !currentAutoFightProfile) return;
       if (emu.isPaused) {
         emu.resume();
         syncControls();
       }
-      const snap = readPokemonRedSnapshot((a) => emu.readMem(a));
+      const snap = currentAutoFightProfile.readSnapshot((a) => emu.readMem(a));
       autoFight.start(snap);
       syncAutoFightButton();
       stepAutoFight();
@@ -1175,7 +1174,7 @@
     }
 
     function toggleAutoFight() {
-      if (!emu || isBusy || !isPokemonRedBlueTitle(currentRomTitle)) return;
+      if (!emu || isBusy || !currentAutoFightProfile) return;
       resumeAudioSafely();
       if (autoFight.getState().active) {
         stopAutoFight('manual');
@@ -1346,7 +1345,7 @@
       if (emu.sramSize > 0) {
         writes.push(dbPut(`sram:${currentRomId}`, emu.getExtRam()));
       }
-      if (isPokemonRedBlueTitle(currentRomTitle)) {
+      if (currentAutoFightProfile) {
         const trail = autoFight.exportTrail();
         writes.push(
           trail ? dbPut(`pokeTrail:${currentRomId}`, trail) : dbDelete(`pokeTrail:${currentRomId}`)
@@ -1359,7 +1358,7 @@
       if (!emu || !currentRomId) return;
       try {
         const sram = emu.sramSize > 0 ? emu.getExtRam() : new Uint8Array();
-        const pokeTrail = isPokemonRedBlueTitle(currentRomTitle) ? autoFight.exportTrail() : null;
+        const pokeTrail = currentAutoFightProfile ? autoFight.exportTrail() : null;
         localStorage.setItem(
           UNLOAD_KEY,
           JSON.stringify({
@@ -1442,12 +1441,14 @@
           emu.destroy();
           emu = null;
         }
+        currentAutoFightProfile = null;
 
         const header = parseRomHeader(romBytes);
         currentRomBytes = romBytes;
         currentRomId = crc32Hex(romBytes);
         currentRomTitle = header ? header.title : label;
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
+        currentAutoFightProfile = getAutoFightProfile(currentRomTitle);
 
         const [sram, autoState, manualState, savedTrail] = await Promise.all([
           dbGet(`sram:${currentRomId}`),
@@ -1466,7 +1467,7 @@
 
         if (autoState && emu.loadState(autoState)) {
           loadStatusSuffix = ' — resumed auto-save';
-          if (isPokemonRedBlueTitle(currentRomTitle) && savedTrail) {
+          if (currentAutoFightProfile && savedTrail) {
             autoFight.importTrail(savedTrail);
           }
         }
@@ -1476,6 +1477,7 @@
           await dbPut(LAST_ROM_KEY, { bytes: romBytes, name: label, savedAt: Date.now() });
         }
       } catch (err) {
+        if (!emu) currentAutoFightProfile = null;
         console.error(err);
         statusEl.textContent = `Failed to load ROM: ${err?.message || err}`;
       } finally {
@@ -1782,10 +1784,15 @@
       }),
       getAutoFight: () => ({
         ...autoFight.getState(),
+        profile: currentAutoFightProfile?.id ?? null,
+        supported: Boolean(emu && currentAutoFightProfile),
         start: startAutoFight,
         stop: stopAutoFight,
         clearTrail: () => autoFight.clearTrail(),
-        snapshot: () => (emu ? readPokemonRedSnapshot((a) => emu.readMem(a)) : null),
+        snapshot: () =>
+          emu && currentAutoFightProfile
+            ? currentAutoFightProfile.readSnapshot((a) => emu.readMem(a))
+            : null,
       }),
     };
   </script>

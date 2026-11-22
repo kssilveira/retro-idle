@@ -19,9 +19,42 @@ export const NON_ATTACK_MOVES = new Set([
 
 const LEARN_PROMPT_RE = /\blearn|trying to|Delete an|forgotten/;
 const DIRS = ['right', 'left', 'up', 'down'];
-const TILEMAP_ADDR = 0xc3a0;
 const TILE_CURSOR = 0xed;
 const MOVE_FIRST_ROW = 13;
+
+export const POKEMON_RED_BLUE_MEM = Object.freeze({
+  facing: 0xc109,
+  tileMap: 0xc3a0,
+  enemyHp: 0xcfe6,
+  battleMon: 0xd014,
+  isInBattle: 0xd057,
+  partyCount: 0xd163,
+  partyMon1: 0xd16b,
+  curMap: 0xd35e,
+  yCoord: 0xd361,
+  xCoord: 0xd362,
+  curMapTileset: 0xd367,
+  curMapHeight: 0xd368,
+  curMapWidth: 0xd369,
+  movementFlags: 0xd736,
+});
+
+export const POKEMON_YELLOW_MEM = Object.freeze({
+  facing: 0xc109,
+  tileMap: 0xc3a0,
+  enemyHp: 0xcfe5,
+  battleMon: 0xd013,
+  isInBattle: 0xd056,
+  partyCount: 0xd162,
+  partyMon1: 0xd16a,
+  curMap: 0xd35d,
+  yCoord: 0xd360,
+  xCoord: 0xd361,
+  curMapTileset: 0xd366,
+  curMapHeight: 0xd367,
+  curMapWidth: 0xd368,
+  movementFlags: 0xd735,
+});
 
 const STANDARD_POKECENTER_CONFIG = Object.freeze({
   standX: 3,
@@ -74,7 +107,7 @@ const OPPOSITE_DIR = Object.freeze({
 const ONE_WAY_STUCK_FRAMES = 45;
 const BLOCKED_STUCK_FRAMES = 240;
 const RETURN_STUCK_FRAMES = 150;
-const HEAL_STALL_FRAMES = 1200;
+const HEAL_STALL_FRAMES = 1800;
 const MAX_TRAIL_LENGTH = 2000;
 const WARP_SNAP_GRACE_FRAMES = 60;
 const MOVEMENT_ONE_WAY_MASK = 0xc0;
@@ -83,11 +116,6 @@ const OUT_OF_PP_MISSING_POKECENTER_REASON =
 
 export function isPokeCenterMap(mapId) {
   return Object.hasOwn(POKECENTER_CONFIGS, mapId);
-}
-
-export function isPokemonRedBlueTitle(title) {
-  const normalized = String(title || '').trim().toUpperCase();
-  return normalized === 'POKEMON RED' || normalized === 'POKEMON BLUE';
 }
 
 export function pickAttackSlot(moves, pp) {
@@ -113,40 +141,40 @@ export function decodeGen1Char(byte) {
   return ' ';
 }
 
-export function readPokemonRedOverworldPos(readMem) {
+export function readPokemonGen1OverworldPos(readMem, mem = POKEMON_RED_BLUE_MEM) {
   const r = (addr) => readMem(addr) & 0xff;
   return {
-    isInBattle: r(0xd057),
-    map: r(0xd35e),
-    y: r(0xd361),
-    x: r(0xd362),
-    tileset: r(0xd367),
-    mapHeight: r(0xd368) * 2,
-    mapWidth: r(0xd369) * 2,
-    partyCount: Math.min(r(0xd163), 6),
-    facing: r(0xc109),
-    movementFlags: r(0xd736),
+    isInBattle: r(mem.isInBattle),
+    map: r(mem.curMap),
+    y: r(mem.yCoord),
+    x: r(mem.xCoord),
+    tileset: r(mem.curMapTileset),
+    mapHeight: r(mem.curMapHeight) * 2,
+    mapWidth: r(mem.curMapWidth) * 2,
+    partyCount: Math.min(r(mem.partyCount), 6),
+    facing: r(mem.facing),
+    movementFlags: r(mem.movementFlags),
   };
 }
 
-export function readPokemonRedSnapshot(readMem) {
+export function readPokemonGen1Snapshot(readMem, mem = POKEMON_RED_BLUE_MEM) {
   const r = (addr) => readMem(addr) & 0xff;
   const r16 = (addr) => (r(addr) << 8) | r(addr + 1);
 
-  const isInBattle = r(0xd057);
-  const map = r(0xd35e);
-  const y = r(0xd361);
-  const x = r(0xd362);
-  const tileset = r(0xd367);
-  const mapHeight = r(0xd368) * 2;
-  const mapWidth = r(0xd369) * 2;
-  const facing = r(0xc109);
-  const movementFlags = r(0xd736);
+  const isInBattle = r(mem.isInBattle);
+  const map = r(mem.curMap);
+  const y = r(mem.yCoord);
+  const x = r(mem.xCoord);
+  const tileset = r(mem.curMapTileset);
+  const mapHeight = r(mem.curMapHeight) * 2;
+  const mapWidth = r(mem.curMapWidth) * 2;
+  const facing = r(mem.facing);
+  const movementFlags = r(mem.movementFlags);
 
-  const partyCount = Math.min(r(0xd163), 6);
+  const partyCount = Math.min(r(mem.partyCount), 6);
   const party = [];
   for (let i = 0; i < partyCount; i++) {
-    const base = 0xd16b + i * 0x2c;
+    const base = mem.partyMon1 + i * 0x2c;
     party.push({
       species: r(base),
       hp: r16(base + 0x01),
@@ -162,24 +190,26 @@ export function readPokemonRedSnapshot(readMem) {
     });
   }
 
+  const battleBase = mem.battleMon;
   const battleMon = {
-    hp: r16(0xd015),
-    maxHp: r16(0xd023),
-    level: r(0xd022),
-    moves: [r(0xd01c), r(0xd01d), r(0xd01e), r(0xd01f)],
+    hp: r16(battleBase + 0x01),
+    maxHp: r16(battleBase + 0x0f),
+    level: r(battleBase + 0x0e),
+    moves: [r(battleBase + 0x08), r(battleBase + 0x09), r(battleBase + 0x0a), r(battleBase + 0x0b)],
     pp: [
-      r(0xd02d) & 0x3f,
-      r(0xd02e) & 0x3f,
-      r(0xd02f) & 0x3f,
-      r(0xd030) & 0x3f,
+      r(battleBase + 0x19) & 0x3f,
+      r(battleBase + 0x1a) & 0x3f,
+      r(battleBase + 0x1b) & 0x3f,
+      r(battleBase + 0x1c) & 0x3f,
     ],
   };
 
-  const enemyHp = r16(0xcfe6);
+  const enemyHp = r16(mem.enemyHp);
 
+  const tileMapAddr = mem.tileMap;
   const readTileRow = (row) => {
     let s = '';
-    const start = TILEMAP_ADDR + row * 20;
+    const start = tileMapAddr + row * 20;
     for (let c = 0; c < 20; c++) {
       s += decodeGen1Char(r(start + c));
     }
@@ -216,7 +246,7 @@ export function readPokemonRedSnapshot(readMem) {
 
   let cursorPos = null;
   for (let row = 12; row <= 17; row++) {
-    const rowAddr = TILEMAP_ADDR + row * 20;
+    const rowAddr = tileMapAddr + row * 20;
     for (let col = 0; col < 20; col++) {
       if (r(rowAddr + col) === TILE_CURSOR) {
         if (!cursorPos) cursorPos = { row, col };
@@ -252,6 +282,69 @@ export function readPokemonRedSnapshot(readMem) {
     cursorPos,
     moveFirstRow: MOVE_FIRST_ROW,
   };
+}
+
+export function readPokemonRedOverworldPos(readMem) {
+  return readPokemonGen1OverworldPos(readMem, POKEMON_RED_BLUE_MEM);
+}
+
+export function readPokemonRedSnapshot(readMem) {
+  return readPokemonGen1Snapshot(readMem, POKEMON_RED_BLUE_MEM);
+}
+
+export function readPokemonYellowOverworldPos(readMem) {
+  return readPokemonGen1OverworldPos(readMem, POKEMON_YELLOW_MEM);
+}
+
+export function readPokemonYellowSnapshot(readMem) {
+  return readPokemonGen1Snapshot(readMem, POKEMON_YELLOW_MEM);
+}
+
+const POKEMON_RED_PROFILE = Object.freeze({
+  id: 'pokemon-red-blue',
+  name: 'Pokémon Red',
+  mem: POKEMON_RED_BLUE_MEM,
+  readOverworldPos: readPokemonRedOverworldPos,
+  readSnapshot: readPokemonRedSnapshot,
+});
+
+const POKEMON_BLUE_PROFILE = Object.freeze({
+  id: 'pokemon-red-blue',
+  name: 'Pokémon Blue',
+  mem: POKEMON_RED_BLUE_MEM,
+  readOverworldPos: readPokemonRedOverworldPos,
+  readSnapshot: readPokemonRedSnapshot,
+});
+
+const POKEMON_YELLOW_PROFILE = Object.freeze({
+  id: 'pokemon-yellow',
+  name: 'Pokémon Yellow',
+  mem: POKEMON_YELLOW_MEM,
+  readOverworldPos: readPokemonYellowOverworldPos,
+  readSnapshot: readPokemonYellowSnapshot,
+});
+
+const AUTO_FIGHT_PROFILES = Object.freeze({
+  'POKEMON RED': POKEMON_RED_PROFILE,
+  'POKEMON BLUE': POKEMON_BLUE_PROFILE,
+  'POKEMON YELLOW': POKEMON_YELLOW_PROFILE,
+});
+
+export function getAutoFightProfile(title) {
+  const normalized = String(title || '').trim().toUpperCase();
+  return AUTO_FIGHT_PROFILES[normalized] ?? null;
+}
+
+export function isSupportedAutoFightTitle(title) {
+  return getAutoFightProfile(title) !== null;
+}
+
+export function isPokemonYellowTitle(title) {
+  return getAutoFightProfile(title)?.id === 'pokemon-yellow';
+}
+
+export function isPokemonRedBlueTitle(title) {
+  return getAutoFightProfile(title)?.id === 'pokemon-red-blue';
 }
 
 function sumPartyPp(party) {

@@ -15,11 +15,18 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators.
 - **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
 - **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, and speed controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
-- **Pokémon Red / Blue Auto-Fight** ([autofight.js](autofight.js)):
-  - Automatically enabled when a `POKEMON RED` or `POKEMON BLUE` ROM is loaded.
+- **Pokémon Red / Blue / Yellow Auto-Fight** ([autofight.js](autofight.js)):
+  - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, or `POKEMON YELLOW` ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl).
   - **Automatic Heal Center heal-and-return:** Passively records a loop-pruned path from the most recently visited Heal Center (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP, Auto-Fight flees wild battles, walks back to heal with the healer, returns to your grinding spot, and resumes fighting.
   - Automatically stops and releases all buttons on **out of PP without a visited Heal Center** (`missing Heal Center path`), **one-way ledge / blocked path** (prompting you to use a returnable path next time), **fainted**, **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
+
+## Roadmap
+
+- [x] **Pokémon Red / Blue** (GB) — Auto-Fight & automatic Heal Center round-trip
+- [x] **Pokémon Yellow** (GB / GBC) — Auto-Fight & automatic Heal Center round-trip
+- [ ] **Pokémon Crystal** (GBC) — Gen 2 WRAM driver (`(mapGroup, mapNum)`), battle/move menus, Heal Center round-trip, and shiny/uncaught encounter stops
+- [ ] **Pokémon Emerald** (GBA) — Add a GBA WASM core (e.g. `mGBA`) + Gen 3 Auto-Fight, Heal Center loop, and Gen 3 idle grinds (EV training, egg hatching, shiny stops)
 
 ## Controls
 

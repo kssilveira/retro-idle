@@ -7,6 +7,7 @@ import { buildTestRom } from './make-test-rom.mjs';
 const REPO_DIR = path.resolve(import.meta.dirname, '..');
 const TMP_DIR = path.join(import.meta.dirname, '.tmp');
 const ROM_PATH = path.join(TMP_DIR, 'mbc3-test.gb');
+const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
 const IMPORTED_SAV_PATH = path.join(TMP_DIR, 'imported.sav');
 const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
 const SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot.png');
@@ -95,6 +96,10 @@ async function waitFor(fn, timeoutMs = 10000, intervalMs = 100) {
 async function main() {
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(ROM_PATH, buildTestRom());
+  fs.writeFileSync(
+    YELLOW_ROM_PATH,
+    buildTestRom({ title: 'POKEMON YELLOW', cgbFlag: 0x80, cartType: 0x1b })
+  );
   fs.rmSync(CHROME_PROFILE, { recursive: true, force: true });
   fs.mkdirSync(CHROME_PROFILE, { recursive: true });
 
@@ -831,6 +836,94 @@ async function main() {
     const shot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
 
+    // Synthetic Pokémon Yellow CGB/MBC5 boot + WRAM Auto-Fight detection verification
+    const docYellow = await client.send('DOM.getDocument');
+    const yellowInputNode = await client.send('DOM.querySelector', {
+      nodeId: docYellow.root.nodeId,
+      selector: '#rom-input',
+    });
+    await client.send('DOM.setFileInputFiles', {
+      nodeId: yellowInputNode.nodeId,
+      files: [YELLOW_ROM_PATH],
+    });
+
+    await waitFor(
+      async () =>
+        await client.eval(
+          `Boolean(window.__retroIdle?.getEmulator()?.isPlaying && window.__retroIdle?.getAutoFight()?.profile === 'pokemon-yellow')`
+        ),
+      12000,
+      50
+    );
+
+    const yellowUi = await client.eval(`({
+      status: document.getElementById('status').textContent,
+      autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
+      healHidden: document.getElementById('heal-center-status').hidden,
+      supported: window.__retroIdle.getAutoFight().supported,
+      profile: window.__retroIdle.getAutoFight().profile,
+    })`);
+    assert.match(
+      yellowUi.status,
+      /^Playing: POKEMON YELLOW \(MBC5 \+ RAM \+ BATTERY\)$/,
+      `Unexpected Yellow status: ${yellowUi.status}`
+    );
+    assert.equal(yellowUi.autoFightDisabled, false, 'Auto-Fight button must enable for POKEMON YELLOW');
+    assert.equal(yellowUi.healHidden, false, 'Heal Center status must be visible for POKEMON YELLOW');
+    assert.equal(yellowUi.supported, true, 'Auto-Fight supported must be true for POKEMON YELLOW');
+    assert.equal(yellowUi.profile, 'pokemon-yellow', 'Expected pokemon-yellow Auto-Fight profile');
+
+    // Write Pokémon Yellow WRAM state inside Viridian Heal Center and confirm live frame observation + snapshot
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const writes = [
+          [0xd056, 0],
+          [0xd35d, 0x29],
+          [0xd360, 7],
+          [0xd361, 3],
+          [0xd366, 6],
+          [0xd367, 4],
+          [0xd368, 7],
+          [0xd162, 1],
+          [0xd16a, 0x54],
+          [0xd16b, 0],
+          [0xd16c, 25],
+          [0xd172, 84],
+          [0xd187, 30],
+          [0xd18b, 5],
+          [0xd18c, 0],
+          [0xd18d, 25],
+        ];
+        for (const [addr, val] of writes) {
+          emu.module._emulator_write_mem(emu.e, addr, val);
+        }
+      })()
+    `);
+
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().inPokeCenter === true`),
+      6000,
+      30
+    );
+
+    const yellowCheck = await client.eval(`({
+      profile: window.__retroIdle.getAutoFight().profile,
+      pokeCenterName: window.__retroIdle.getAutoFight().pokeCenterName,
+      healStatus: document.getElementById('heal-center-status').textContent,
+      snapshot: window.__retroIdle.getAutoFight().snapshot(),
+    })`);
+    assert.equal(yellowCheck.pokeCenterName, 'Viridian Heal Center');
+    assert.match(yellowCheck.healStatus, /Heal Center visited: Viridian Heal Center/);
+    assert.equal(yellowCheck.snapshot.map, 0x29);
+    assert.equal(yellowCheck.snapshot.x, 3);
+    assert.equal(yellowCheck.snapshot.y, 7);
+    assert.equal(yellowCheck.snapshot.tileset, 6);
+    assert.equal(yellowCheck.snapshot.partyCount, 1);
+    assert.equal(yellowCheck.snapshot.party[0].hp, 25);
+    assert.equal(yellowCheck.snapshot.party[0].moves[0], 84);
+    assert.equal(yellowCheck.snapshot.party[0].pp[0], 30);
+
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(
       (e) =>
@@ -859,6 +952,11 @@ async function main() {
       resetStatus,
       speedCheck: { ticks1x, ticks4x, ratio: Number((ticks4x / ticks1x).toFixed(2)) },
       miniPlayerInfo,
+      yellowCheck: {
+        profile: yellowCheck.profile,
+        pokeCenterName: yellowCheck.pokeCenterName,
+        healStatus: yellowCheck.healStatus,
+      },
       screenshot: SCREENSHOT_PATH,
     });
   } finally {

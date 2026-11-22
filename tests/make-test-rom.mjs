@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** Build an original 64 KB MBC3 + RAM + BATTERY test ROM without copyrighted assets. */
-export function buildTestRom() {
+/** Build an original 64 KB test ROM without copyrighted assets. */
+export function buildTestRom({ title = 'MBC3 TEST', cgbFlag = 0x00, cartType = 0x13 } = {}) {
   const rom = new Uint8Array(64 * 1024); // 64 KB = 4 ROM banks
 
   // Entry point: NOP; JP 0x0150
@@ -13,14 +13,14 @@ export function buildTestRom() {
     rom[0x0114 + k] = (0xe06c8834 >>> (31 - k)) & 1;
   }
 
-  // Title: "MBC3 TEST" at 0x0134..0x0142
-  const title = 'MBC3 TEST';
-  for (let i = 0; i < title.length; i++) {
-    rom[0x0134 + i] = title.charCodeAt(i);
+  // Title: up to 15 ASCII bytes at 0x0134..0x0142 (0x0143 holds CGB flag)
+  const cleanTitle = String(title).slice(0, 15);
+  for (let i = 0; i < cleanTitle.length; i++) {
+    rom[0x0134 + i] = cleanTitle.charCodeAt(i);
   }
 
-  rom[0x0143] = 0x00; // DMG
-  rom[0x0147] = 0x13; // MBC3 + RAM + BATTERY (same as Pokemon Red)
+  rom[0x0143] = cgbFlag & 0xff; // 0x00 DMG, 0x80 CGB-compatible
+  rom[0x0147] = cartType & 0xff; // 0x13 MBC3+RAM+BATTERY, 0x1B MBC5+RAM+BATTERY
   rom[0x0148] = 0x01; // 64 KB (4 ROM banks)
   rom[0x0149] = 0x03; // 32 KB (4 SRAM banks, same as Pokemon Red)
 
