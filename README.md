@@ -27,8 +27,8 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 
 - [x] **Pokémon Red / Blue** (GB) — Auto-Fight & automatic Heal Center round-trip
 - [x] **Pokémon Yellow** (GB / GBC) — Auto-Fight & automatic Heal Center round-trip
-- [x] **Pokémon Crystal** (GBC) — Gen 2 WRAM driver (`(mapGroup, mapNum)`), battle/move menus, Heal Center round-trip, and shiny encounter stop
-- [ ] **Pokémon Emerald** (GBA) — Add a GBA WASM core (e.g. `mGBA`) + Gen 3 Auto-Fight, Heal Center loop, and Gen 3 idle grinds (EV training, egg hatching, shiny stops)
+- [x] **Pokémon Crystal** (GBC) — Auto-Fight, automatic Heal Center round-trip, and shiny encounter stop
+- [ ] **Pokémon Emerald** (GBA) — GBA WASM core (e.g. `mGBA`), Auto-Fight, automatic Heal Center round-trip, and shiny encounter stop
 
 ## Controls
 

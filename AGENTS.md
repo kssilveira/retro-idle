@@ -80,12 +80,8 @@ We originally considered `wasmboy` first with `binjgb` as the fallback, then swi
 
 ---
 
-## 6. Next Steps
-- **Game Support Roadmap:**
-  - **Pokémon Red / Blue (GB)** — Implemented in [autofight.js](autofight.js) + [index.html](index.html).
-  - **Pokémon Yellow (GB / GBC)** — Implemented via `POKEMON_YELLOW_MEM` + `getAutoFightProfile` in [autofight.js](autofight.js).
-  - **Pokémon Crystal (GBC)** — Implemented via `POKEMON_CRYSTAL_MEM`, `CRYSTAL_POKECENTER_CONFIGS`, `readWram`/`readWramLinear`, and shiny stop in [autofight.js](autofight.js) + [index.html](index.html).
-  - **Pokémon Emerald (GBA)** — Future: add a GBA WASM core (e.g., `mGBA`) + Gen 3 Auto-Fight, Heal Center loop, and Gen 3 idle grinds (EV training, egg hatching, shiny stops).
-- Bootstrap a package manager (`npm`/`pnpm`) when ready to migrate to Vite + TypeScript; when adding a build step, set `base: '/retro-idle/'` in `vite.config.ts` and switch GitHub Pages to a GitHub Actions workflow deploying `dist/`.
-- **M2/M3 polish — Live WRAM Telemetry HUD & Configurable Stops:** Surface lead level, HP/MaxHP, PP, species, and configurable stop conditions (target level, min HP%, uncaught/target species via internal-ID → National Dex mapping) plus generic macro fallback for non-Pokémon ROMs.
-- **M3–M5 — Background Worker Turbo, Undo Ring Buffer & Alerts:** Extract `BinjgbEmulator` into `EmulatorCore` (`src/core/emulator.ts`) inside a Web Worker for throttled background tabs (`1x`–`20x`), add a rolling save-state ring buffer for one-click Undo Auto-Pilot, and add Web Notifications.
+## 6. Roadmap
+- **Pokémon Red / Blue (GB)** — Implemented in [autofight.js](autofight.js) + [index.html](index.html) (Auto-Fight & automatic Heal Center round-trip).
+- **Pokémon Yellow (GB / GBC)** — Implemented via `POKEMON_YELLOW_MEM` + `getAutoFightProfile` in [autofight.js](autofight.js) (Auto-Fight & automatic Heal Center round-trip).
+- **Pokémon Crystal (GBC)** — Implemented via `POKEMON_CRYSTAL_MEM`, `CRYSTAL_POKECENTER_CONFIGS`, `readWram`/`readWramLinear`, and shiny stop in [autofight.js](autofight.js) + [index.html](index.html) (Auto-Fight, automatic Heal Center round-trip, and shiny encounter stop).
+- **Pokémon Emerald (GBA)** — Future: add a GBA WASM core (e.g., `mGBA`) matching the existing feature set (saves/states, speed controls, touch controls, Mini-Player, Auto-Fight, automatic Heal Center round-trip, and shiny encounter stop).
