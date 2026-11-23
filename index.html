@@ -1198,15 +1198,14 @@
         this.imageData = this.ctx.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
 
         const alignedSize = (romBytes.byteLength + 0x7fff) & ~0x7fff;
-        this.romPtr = module._malloc(alignedSize);
-        new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).fill(0);
-        new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).set(romBytes);
+        const romPtr = module._malloc(alignedSize);
+        new Uint8Array(module.HEAP8.buffer, romPtr, alignedSize).fill(0);
+        new Uint8Array(module.HEAP8.buffer, romPtr, alignedSize).set(romBytes);
 
         this.audioSampleRate = audioCtx?.sampleRate || DEFAULT_AUDIO_SAMPLE_RATE;
-        this.e = module._emulator_new_simple(this.romPtr, alignedSize, this.audioSampleRate, AUDIO_FRAMES, 2);
+        this.e = module._emulator_new_simple(romPtr, alignedSize, this.audioSampleRate, AUDIO_FRAMES, 2);
         if (this.e === 0) {
-          module._free(this.romPtr);
-          this.romPtr = 0;
+          module._free(romPtr);
           throw new Error('Invalid ROM');
         }
 
@@ -1478,10 +1477,6 @@
         if (this.joypadPtr) {
           this.module._joypad_delete(this.joypadPtr);
           this.joypadPtr = 0;
-        }
-        if (this.romPtr) {
-          this.module._free(this.romPtr);
-          this.romPtr = 0;
         }
       }
     }

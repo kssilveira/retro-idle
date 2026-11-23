@@ -7,6 +7,7 @@ import { buildTestRom, buildGbaTestRom } from './make-test-rom.mjs';
 const REPO_DIR = path.resolve(import.meta.dirname, '..');
 const TMP_DIR = path.join(import.meta.dirname, '.tmp');
 const ROM_PATH = path.join(TMP_DIR, 'mbc3-test.gb');
+const BIG_ROM_PATH = path.join(TMP_DIR, 'mbc3-big-test.gb');
 const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
 const CRYSTAL_ROM_PATH = path.join(TMP_DIR, 'pokemon-crystal-test.gbc');
 const GBA_ROM_PATH = path.join(TMP_DIR, 'gba-test.gba');
@@ -102,6 +103,7 @@ async function waitFor(fn, timeoutMs = 10000, intervalMs = 100) {
 async function main() {
   fs.mkdirSync(TMP_DIR, { recursive: true });
   fs.writeFileSync(ROM_PATH, buildTestRom());
+  fs.writeFileSync(BIG_ROM_PATH, buildTestRom({ title: 'BIG TEST', romSizeCode: 0x03 }));
   fs.writeFileSync(
     YELLOW_ROM_PATH,
     buildTestRom({ title: 'POKEMON YELLOW', cgbFlag: 0x80, cartType: 0x1b })
@@ -2466,6 +2468,54 @@ async function main() {
         muted: prefsAfterReload2.muted,
       },
     };
+
+    // Regression check: switching between differently-sized GB ROMs must not corrupt binjgb heap
+    for (const [romFile, expectedTitle] of [
+      [BIG_ROM_PATH, 'BIG TEST'],
+      [ROM_PATH, 'MBC3 TEST'],
+      [BIG_ROM_PATH, 'BIG TEST'],
+      [ROM_PATH, 'MBC3 TEST'],
+    ]) {
+      const switchDoc = await client.send('DOM.getDocument');
+      const switchInput = await client.send('DOM.querySelector', {
+        nodeId: switchDoc.root.nodeId,
+        selector: '#rom-input',
+      });
+      await client.send('DOM.setFileInputFiles', {
+        nodeId: switchInput.nodeId,
+        files: [romFile],
+      });
+      await waitFor(
+        async () =>
+          await client.eval(`(() => {
+            const st = document.getElementById('status')?.textContent || '';
+            const emu = window.__retroIdle?.getEmulator?.();
+            return (
+              !st.startsWith('Loading') &&
+              st.includes(${JSON.stringify(expectedTitle)}) &&
+              Boolean(emu?.isPlaying)
+            );
+          })()`),
+        10000,
+        50
+      );
+      await sleep(250);
+      const switchState = await client.eval(`(() => {
+        const emu = window.__retroIdle.getEmulator();
+        return {
+          sramSize: emu.sramSize,
+          firstHeaderByte: emu.readMem(0x0134),
+          wramBank2Byte: emu.readMem(0xc000),
+        };
+      })()`);
+      assert.equal(switchState.sramSize, 32768, `${expectedTitle}: expected 32768-byte SRAM after ROM switch`);
+      assert.equal(
+        switchState.firstHeaderByte,
+        expectedTitle.charCodeAt(0),
+        `${expectedTitle}: ROM header byte 0x0134 corrupted after ROM switch`
+      );
+      assert.equal(switchState.wramBank2Byte, 0x5a, `${expectedTitle}: CPU failed to write 0x5A to 0xC000`);
+    }
 
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(
