@@ -63,3 +63,4 @@ node tests/verify.mjs
 ## Copyright Notice
 
 - **No copyrighted ROMs, BIOS dumps, or game assets are included.** Bring your own legally obtained `.gb` / `.gbc` ROMs; everything runs 100% client-side in your browser.
+- **Not affiliated with or endorsed by Nintendo, Creatures, or Game Freak.** Game Boy, Game Boy Color, Game Boy Advance, and Pokémon are trademarks of their respective owners and are mentioned solely to describe compatibility.
