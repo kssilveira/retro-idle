@@ -1446,6 +1446,8 @@
           return 'Auto-Fight: healing at Heal Center...';
         case 'walking_back':
           return 'Auto-Fight: walking back to grind spot...';
+        case 'recovering':
+          return 'Auto-Fight: fainted — recovering at Heal Center...';
         default:
           return `Auto-Fight: ${res.phase}...${state.hasHealPath ? ' (Heal Center path ready)' : ''}`;
       }

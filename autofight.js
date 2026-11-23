@@ -190,11 +190,21 @@ const ONE_WAY_STUCK_FRAMES = 45;
 const BLOCKED_STUCK_FRAMES = 240;
 const RETURN_STUCK_FRAMES = 150;
 const HEAL_STALL_FRAMES = 1800;
+const RECOVER_STALL_FRAMES = 1800;
+const RECOVER_WRONG_MAP_GRACE_FRAMES = 180;
+const RECOVER_SAME_ORIGIN_GRACE_FRAMES = 30;
+const RECOVER_NO_ATTACK_PP_GRACE_FRAMES = 60;
+const BLACKOUT_SPAWN_MAX_DIST = 4;
 const MAX_TRAIL_LENGTH = 2000;
 const WARP_SNAP_GRACE_FRAMES = 60;
 const MOVEMENT_ONE_WAY_MASK = 0xc0;
 const OUT_OF_PP_MISSING_POKECENTER_REASON =
   'out of PP (missing Heal Center path — visit a Heal Center first)';
+const FAINTED_MISSING_POKECENTER_REASON =
+  'fainted (missing Heal Center path — visit a Heal Center first)';
+const FAINTED_WRONG_HEAL_CENTER_REASON =
+  'fainted (blacked out to a different location — heal at your chosen Heal Center first)';
+const FAINTED_STALL_REASON = 'fainted recovery stalled';
 
 export function isPokeCenterMap(mapId) {
   return Object.hasOwn(ALL_POKECENTER_CONFIGS, mapId);
@@ -308,6 +318,49 @@ function readBattleTilemap(r, tileMapAddr, { matchDisabled = false } = {}) {
     }
   }
 
+  let partyCursorRow = null;
+  for (let row = 0; row <= 11; row++) {
+    if (r(tileMapAddr + row * 20) === TILE_CURSOR) {
+      partyCursorRow = row;
+      break;
+    }
+  }
+
+  let switchPos = null;
+  for (let row = 10; row <= 17; row++) {
+    const rowText = row >= 12 ? menuBoxRows[row - 12] : readTileRow(row);
+    const col = rowText.indexOf('SWITCH');
+    if (col !== -1) {
+      switchPos = { row, col };
+      break;
+    }
+  }
+
+  let switchCursorPos = null;
+  if (switchPos) {
+    const minCol = Math.max(0, switchPos.col - 2);
+    for (let row = 10; row <= 17 && !switchCursorPos; row++) {
+      const rowAddr = tileMapAddr + row * 20;
+      for (let col = minCol; col < 20; col++) {
+        if (r(rowAddr + col) === TILE_CURSOR) {
+          switchCursorPos = { row, col };
+          break;
+        }
+      }
+    }
+    if (!switchCursorPos) {
+      for (let row = 10; row <= 17 && !switchCursorPos; row++) {
+        const rowAddr = tileMapAddr + row * 20;
+        for (let col = 0; col < minCol; col++) {
+          if (r(rowAddr + col) === TILE_CURSOR) {
+            switchCursorPos = { row, col };
+            break;
+          }
+        }
+      }
+    }
+  }
+
   return {
     hasTypeBox,
     menuBoxRows,
@@ -317,6 +370,9 @@ function readBattleTilemap(r, tileMapAddr, { matchDisabled = false } = {}) {
     hasRun,
     cursorPos,
     moveFirstRow: MOVE_FIRST_ROW,
+    partyCursorRow,
+    switchPos,
+    switchCursorPos,
   };
 }
 
@@ -601,6 +657,29 @@ function sumPartyHp(party) {
   return total;
 }
 
+function hasNonEggPartyMon(party) {
+  return party.some((m) => !m.isEgg);
+}
+
+function countNonEggPartyMons(party) {
+  let count = 0;
+  for (const m of party) {
+    if (!m.isEgg) count += 1;
+  }
+  return count;
+}
+
+function findLivingPartyIndex(party) {
+  return party.findIndex((m) => !m.isEgg && m.hp > 0);
+}
+
+function isPartyAllFullHp(party) {
+  return (
+    hasNonEggPartyMon(party) &&
+    party.every((m) => m.isEgg || (m.maxHp > 0 && m.hp === m.maxHp))
+  );
+}
+
 function dirFromFacing(facing) {
   return FACING_TO_DIR[facing] ?? null;
 }
@@ -668,6 +747,11 @@ export function createAutoFight(options = {}) {
   let healStartTotalHp = 0;
   let healFrames = 0;
   let closeCycleFrame = 0;
+  let recoverFrames = 0;
+  let recoverWrongLocFrames = 0;
+  let recoverSameOriginFrames = 0;
+  let recoverNoAttackFrames = 0;
+  let recoverOrigin = null;
 
   function hasHealPath(mapId) {
     return pokeCenterMap !== null && trail.length > 0 && trail[trail.length - 1].map === mapId;
@@ -1000,9 +1084,17 @@ export function createAutoFight(options = {}) {
     healSubphase = null;
     stuckFrames = 0;
     healFrames = 0;
+    recoverFrames = 0;
+    recoverWrongLocFrames = 0;
+    recoverSameOriginFrames = 0;
+    recoverNoAttackFrames = 0;
+    recoverOrigin = null;
 
     if (wasActive && pokeCenterMap !== null) {
-      if (prevPhase === 'healing') {
+      if (
+        prevPhase === 'healing' ||
+        (prevPhase === 'recovering' && isPokeCenterMap(lastPos.map))
+      ) {
         wasInPokeCenter = true;
         pokeCenterTileset = ALL_POKECENTER_CONFIGS[pokeCenterMap]?.tileset ?? pokeCenterTileset;
         trail = [];
@@ -1013,6 +1105,7 @@ export function createAutoFight(options = {}) {
       } else if (
         prevPhase === 'returning' ||
         prevPhase === 'walking_back' ||
+        prevPhase === 'recovering' ||
         prevTravelMode !== null
       ) {
         if (reconcileTrailToPos(lastPos)) {
@@ -1072,6 +1165,90 @@ export function createAutoFight(options = {}) {
     healStartTotalHp = 0;
     healFrames = 0;
     closeCycleFrame = 0;
+    recoverFrames = 0;
+    recoverWrongLocFrames = 0;
+    recoverSameOriginFrames = 0;
+    recoverNoAttackFrames = 0;
+    recoverOrigin = null;
+  }
+
+  function findBlackoutWalkBackStart(snap) {
+    if (trail.length === 0 || snap.map !== trail[0].map || !isValidOverworldCoord(snap)) {
+      return null;
+    }
+    const distToDoor = Math.abs(snap.x - trail[0].x) + Math.abs(snap.y - trail[0].y);
+    if (distToDoor > BLACKOUT_SPAWN_MAX_DIST) {
+      return null;
+    }
+
+    let segEnd = 0;
+    while (segEnd < trail.length && trail[segEnd].map === trail[0].map) {
+      segEnd += 1;
+    }
+
+    for (let k = 0; k < segEnd; k++) {
+      if (trail[k].x === snap.x && trail[k].y === snap.y) {
+        return k + 1;
+      }
+    }
+
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < segEnd; i++) {
+      const dist = Math.abs(snap.x - trail[i].x) + Math.abs(snap.y - trail[i].y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+
+    // Avoid walking back into the Heal Center door when blackout spawns adjacent to it.
+    if (
+      bestIdx === 0 &&
+      segEnd > 1 &&
+      steerSameMap(snap, trail[0]) === (trail[0].exitDir || 'up') &&
+      Math.abs(snap.x - trail[1].x) + Math.abs(snap.y - trail[1].y) <= BLACKOUT_SPAWN_MAX_DIST
+    ) {
+      bestIdx = 1;
+    }
+
+    return bestIdx;
+  }
+
+  function beginRecovering(snap) {
+    phase = 'recovering';
+    travelMode = null;
+    healSubphase = null;
+    wasInBattle = snap.isInBattle === 1;
+    battleMonReady = false;
+    encounterChecked = false;
+    pulse = null;
+    cooldown = 0;
+    stuckFrames = 0;
+    overworldCooldown = 0;
+    recoverFrames = 0;
+    recoverWrongLocFrames = 0;
+    recoverSameOriginFrames = 0;
+    recoverNoAttackFrames = 0;
+    recoverOrigin = isValidOverworldCoord(snap)
+      ? { map: snap.map, x: snap.x, y: snap.y }
+      : lastPos.map >= 0
+        ? { ...lastPos }
+        : null;
+    if (isValidOverworldCoord(snap)) {
+      lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    }
+  }
+
+  function handleOverworldFainted(snap, party) {
+    if (!hasNonEggPartyMon(party)) {
+      return stop('fainted');
+    }
+    if (hasHealPath(anchor.map)) {
+      beginRecovering(snap);
+      return stepRecovering(snap, party);
+    }
+    return stop(FAINTED_MISSING_POKECENTER_REASON);
   }
 
   function beginReturning(snap) {
@@ -1117,6 +1294,46 @@ export function createAutoFight(options = {}) {
     };
   }
 
+  function tickPulseAndCooldown() {
+    if (pulse && pulse.framesLeft > 0) {
+      pulse.framesLeft -= 1;
+      if (pulse.framesLeft === 0) {
+        cooldown = pulse.cooldownAfter;
+      }
+      return {
+        active: true,
+        buttons: { ...NEUTRAL_BUTTONS, [pulse.button]: true },
+        stopReason: null,
+        phase,
+      };
+    }
+
+    if (cooldown > 0) {
+      cooldown -= 1;
+      return neutral();
+    }
+
+    return null;
+  }
+
+  function beginHealing(snap, party, nextSubphase = 'to_nurse') {
+    wasInBattle = false;
+    battleMonReady = false;
+    encounterChecked = false;
+    phase = 'healing';
+    travelMode = null;
+    healSubphase = nextSubphase;
+    healStartTotalPp = sumPartyPp(party);
+    healStartTotalHp = sumPartyHp(party);
+    healFrames = 0;
+    closeCycleFrame = 0;
+    stuckFrames = 0;
+    pulse = null;
+    cooldown = 0;
+    lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    return stepHealing(snap, party);
+  }
+
   function stepFleeMainMenu(snap) {
     if (!snap.cursorPos) return neutral();
     const runPos = snap.runPos || {
@@ -1135,7 +1352,7 @@ export function createAutoFight(options = {}) {
   function stepHealing(snap, party) {
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
-      return stop('fainted');
+      return handleOverworldFainted(snap, party);
     }
     if (healSubphase !== 'exiting' && snap.map !== pokeCenterMap) {
       return stop('map changed');
@@ -1146,23 +1363,8 @@ export function createAutoFight(options = {}) {
       return stop('healing stalled at Heal Center');
     }
 
-    if (pulse && pulse.framesLeft > 0) {
-      pulse.framesLeft -= 1;
-      if (pulse.framesLeft === 0) {
-        cooldown = pulse.cooldownAfter;
-      }
-      return {
-        active: true,
-        buttons: { ...NEUTRAL_BUTTONS, [pulse.button]: true },
-        stopReason: null,
-        phase,
-      };
-    }
-
-    if (cooldown > 0) {
-      cooldown -= 1;
-      return neutral();
-    }
+    const activePulse = tickPulseAndCooldown();
+    if (activePulse) return activePulse;
 
     const cfg = ALL_POKECENTER_CONFIGS[pokeCenterMap];
 
@@ -1193,8 +1395,7 @@ export function createAutoFight(options = {}) {
     }
 
     if (healSubphase === 'talking_nurse') {
-      const allFullHp =
-        party.some((m) => !m.isEgg) && party.every((m) => m.isEgg || m.hp === m.maxHp);
+      const allFullHp = isPartyAllFullHp(party);
       const hasAttackPp = pickAttackSlot(lead.moves, lead.pp) !== -1;
       const curPp = sumPartyPp(party);
       const curHp = sumPartyHp(party);
@@ -1227,7 +1428,7 @@ export function createAutoFight(options = {}) {
         travelMode = 'walking_back';
         pathIdx = 0;
         stuckFrames = 0;
-        overworldCooldown = 0;
+        overworldCooldown = 30;
         healSubphase = null;
         lastPos = { map: snap.map, x: snap.x, y: snap.y };
         return stepWalkingBack(snap, party);
@@ -1247,22 +1448,11 @@ export function createAutoFight(options = {}) {
   function stepReturning(snap, party) {
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
-      return stop('fainted');
+      return handleOverworldFainted(snap, party);
     }
 
     if (snap.map === pokeCenterMap) {
-      phase = 'healing';
-      travelMode = null;
-      healSubphase = 'to_nurse';
-      healStartTotalPp = sumPartyPp(party);
-      healStartTotalHp = sumPartyHp(party);
-      healFrames = 0;
-      closeCycleFrame = 0;
-      stuckFrames = 0;
-      pulse = null;
-      cooldown = 0;
-      lastPos = { map: snap.map, x: snap.x, y: snap.y };
-      return stepHealing(snap, party);
+      return beginHealing(snap, party, 'to_nurse');
     }
 
     if (!trail.some((n) => n.map === snap.map)) {
@@ -1347,7 +1537,7 @@ export function createAutoFight(options = {}) {
   function stepWalkingBack(snap, party) {
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
-      return stop('fainted');
+      return handleOverworldFainted(snap, party);
     }
 
     if (!trail.some((n) => n.map === snap.map)) {
@@ -1429,7 +1619,7 @@ export function createAutoFight(options = {}) {
   function stepMoving(snap, party) {
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
-      return stop('fainted');
+      return handleOverworldFainted(snap, party);
     }
     if (snap.map === anchor.map) {
       recordMovingStep(snap);
@@ -1489,6 +1679,135 @@ export function createAutoFight(options = {}) {
     };
   }
 
+  function stepRecovering(snap, party) {
+    if (!hasHealPath(anchor.map)) {
+      return stop(FAINTED_MISSING_POKECENTER_REASON);
+    }
+    recoverFrames += 1;
+    if (recoverFrames >= RECOVER_STALL_FRAMES) {
+      return stop(FAINTED_STALL_REASON);
+    }
+    if (isValidOverworldCoord(snap)) {
+      lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    }
+
+    if (snap.isInBattle === 0) {
+      const lead = party.find((m) => !m.isEgg && m.hp > 0);
+      const allFullHp = isPartyAllFullHp(party);
+      const hasAttackPp = Boolean(lead && pickAttackSlot(lead.moves, lead.pp) !== -1);
+      const cfg = ALL_POKECENTER_CONFIGS[pokeCenterMap];
+      const doorNode = trail[0];
+
+      if (snap.map === pokeCenterMap) {
+        recoverWrongLocFrames = 0;
+        if (snap.tileset !== undefined && cfg && snap.tileset !== cfg.tileset) {
+          return neutral();
+        }
+        if (lead && allFullHp && hasAttackPp) {
+          return beginHealing(snap, party, cfg && snap.y > cfg.standY ? 'exiting' : 'closing_dialogue');
+        }
+        if (lead && allFullHp && !hasAttackPp) {
+          recoverNoAttackFrames += 1;
+          if (recoverNoAttackFrames >= RECOVER_NO_ATTACK_PP_GRACE_FRAMES) {
+            return beginHealing(snap, party, 'to_nurse');
+          }
+          return neutral();
+        }
+        if (lead && !allFullHp) {
+          return beginHealing(snap, party, 'to_nurse');
+        }
+      } else if (
+        doorNode &&
+        snap.map === doorNode.map &&
+        lead &&
+        allFullHp &&
+        (snap.tileset === undefined || pokeCenterTileset === null || snap.tileset !== pokeCenterTileset) &&
+        isValidOverworldCoord(snap)
+      ) {
+        const startIdx = findBlackoutWalkBackStart(snap);
+        if (startIdx !== null) {
+          recoverWrongLocFrames = 0;
+          if (
+            recoverOrigin &&
+            recoverOrigin.map === snap.map &&
+            recoverOrigin.x === snap.x &&
+            recoverOrigin.y === snap.y &&
+            (snap.x !== doorNode.x || snap.y !== doorNode.y)
+          ) {
+            if (recoverSameOriginFrames < RECOVER_SAME_ORIGIN_GRACE_FRAMES) {
+              recoverSameOriginFrames += 1;
+              return neutral();
+            }
+          }
+          if (!hasAttackPp) {
+            recoverNoAttackFrames += 1;
+            if (recoverNoAttackFrames >= RECOVER_NO_ATTACK_PP_GRACE_FRAMES) {
+              return stop('out of PP');
+            }
+            return neutral();
+          }
+          wasInBattle = false;
+          battleMonReady = false;
+          encounterChecked = false;
+          phase = 'walking_back';
+          travelMode = 'walking_back';
+          pathIdx = startIdx;
+          stuckFrames = 0;
+          overworldCooldown = 30;
+          healSubphase = null;
+          pulse = null;
+          cooldown = 0;
+          lastPos = { map: snap.map, x: snap.x, y: snap.y };
+          return stepWalkingBack(snap, party);
+        }
+      }
+
+      if (lead && allFullHp && snap.map !== pokeCenterMap) {
+        recoverWrongLocFrames += 1;
+        if (recoverWrongLocFrames >= RECOVER_WRONG_MAP_GRACE_FRAMES) {
+          clearTrail();
+          return stop(FAINTED_WRONG_HEAL_CENTER_REASON);
+        }
+        return neutral();
+      }
+    }
+
+    const activePulse = tickPulseAndCooldown();
+    if (activePulse) return activePulse;
+
+    if (snap.isInBattle === 0xff) {
+      return (snap.menuBoxText || '').trim().length > 0 ? startPulse('a', 3, 8) : neutral();
+    }
+    if (snap.isInBattle === 0 && snap.map === pokeCenterMap) {
+      return startPulse('b', 3, 8);
+    }
+    return startPulse('a', 3, 8);
+  }
+
+  function stepFaintSwitch(snap, livingIdx, partyLen) {
+    phase = travelMode !== null ? 'fleeing' : 'fighting';
+    const activePulse = tickPulseAndCooldown();
+    if (activePulse) return activePulse;
+
+    if (snap.switchPos) {
+      const cur = snap.switchCursorPos || snap.cursorPos;
+      if (!cur) return neutral();
+      if (cur.row < snap.switchPos.row) return startPulse('down', 3, 6);
+      if (cur.row > snap.switchPos.row) return startPulse('up', 3, 6);
+      return startPulse('a', 3, 12);
+    }
+
+    if (snap.partyCursorRow !== null && snap.partyCursorRow !== undefined) {
+      const currentSlot = snap.partyCursorRow >> 1;
+      if (currentSlot < 0 || currentSlot >= partyLen) return neutral();
+      if (currentSlot < livingIdx) return startPulse('down', 3, 6);
+      if (currentSlot > livingIdx) return startPulse('up', 3, 6);
+      return startPulse('a', 3, 12);
+    }
+
+    return startPulse('a', 3, 8);
+  }
+
   function step(snap) {
     if (!active) {
       return {
@@ -1516,12 +1835,23 @@ export function createAutoFight(options = {}) {
       }
     }
 
-    // 2. Blackout or trainer battle safety stops.
+    // 2. Blackout or trainer battle handling.
     if (snap.isInBattle === 0xff) {
-      return stop('fainted');
+      if (phase === 'recovering') {
+        return stepRecovering(snap, party);
+      }
+      if (hasHealPath(anchor.map) && hasNonEggPartyMon(party)) {
+        beginRecovering(snap);
+        return stepRecovering(snap, party);
+      }
+      return stop(hasNonEggPartyMon(party) ? FAINTED_MISSING_POKECENTER_REASON : 'fainted');
     }
     if (snap.isInBattle === 2) {
       return stop('trainer battle');
+    }
+
+    if (phase === 'recovering') {
+      return stepRecovering(snap, party);
     }
 
     // 3. Overworld phases.
@@ -1596,28 +1926,22 @@ export function createAutoFight(options = {}) {
     }
 
     if (battleMonReady && snap.battleMon.hp === 0) {
-      return stop('fainted');
+      if (!hasHealPath(anchor.map)) {
+        return stop(hasNonEggPartyMon(party) ? FAINTED_MISSING_POKECENTER_REASON : 'fainted');
+      }
+      const livingIdx = findLivingPartyIndex(party);
+      const nonEggCount = countNonEggPartyMons(party);
+      if (livingIdx === -1 || nonEggCount <= 1) {
+        beginRecovering(snap);
+        return stepRecovering(snap, party);
+      }
+      return stepFaintSwitch(snap, livingIdx, party.length);
     }
 
     phase = travelMode !== null ? 'fleeing' : 'fighting';
 
-    if (pulse && pulse.framesLeft > 0) {
-      pulse.framesLeft -= 1;
-      if (pulse.framesLeft === 0) {
-        cooldown = pulse.cooldownAfter;
-      }
-      return {
-        active: true,
-        buttons: { ...NEUTRAL_BUTTONS, [pulse.button]: true },
-        stopReason: null,
-        phase,
-      };
-    }
-
-    if (cooldown > 0) {
-      cooldown -= 1;
-      return neutral();
-    }
+    const activePulse = tickPulseAndCooldown();
+    if (activePulse) return activePulse;
 
     // Move Selection Menu.
     if (snap.hasTypeBox) {
