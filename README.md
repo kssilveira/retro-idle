@@ -20,14 +20,14 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
   - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW`, or Pokémon Crystal (`PM_CRYSTAL`) ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl or False Swipe).
   - **Automatic Heal Center heal-and-return:** Passively records a loop-pruned path from the most recently visited Heal Center (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP, Auto-Fight flees wild battles, walks back to heal with the healer, returns to your grinding spot, and resumes fighting. If your party faints with an active Heal Center path, Auto-Fight switches to another healthy party Pokémon or recovers from the Heal Center blackout spawn and walks back to your grinding spot automatically.
-  - **Crystal shiny & uncaught stops:** Always stops immediately on **shiny** Gen 2 wild encounters (`shiny encounter`), and stops on **uncaught** Pokédex species (`uncaught encounter`) while **Stop: Uncaught** is toggled on (click to switch between `Stop: Uncaught` and `Fight: Uncaught`).
+  - **Crystal shiny stop:** Always stops immediately on **shiny** Gen 2 wild encounters (`shiny encounter`).
   - Automatically stops and releases all buttons on **out of PP or fainting without a visited Heal Center** (`missing Heal Center path`), **blackout to a different location** than the tracked Heal Center, **one-way ledge / blocked path** (prompting you to use a returnable path next time), **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
 
 ## Roadmap
 
 - [x] **Pokémon Red / Blue** (GB) — Auto-Fight & automatic Heal Center round-trip
 - [x] **Pokémon Yellow** (GB / GBC) — Auto-Fight & automatic Heal Center round-trip
-- [x] **Pokémon Crystal** (GBC) — Gen 2 WRAM driver (`(mapGroup, mapNum)`), battle/move menus, Heal Center round-trip, and shiny/uncaught encounter stops
+- [x] **Pokémon Crystal** (GBC) — Gen 2 WRAM driver (`(mapGroup, mapNum)`), battle/move menus, Heal Center round-trip, and shiny encounter stop
 - [ ] **Pokémon Emerald** (GBA) — Add a GBA WASM core (e.g. `mGBA`) + Gen 3 Auto-Fight, Heal Center loop, and Gen 3 idle grinds (EV training, egg hatching, shiny stops)
 
 ## Controls

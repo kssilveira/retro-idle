@@ -1148,7 +1148,7 @@ async function main() {
     assert.equal(yellowCheck.snapshot.party[0].moves[0], 84);
     assert.equal(yellowCheck.snapshot.party[0].pp[0], 30);
 
-    // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + shiny stop + Uncaught toggle
+    // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + shiny stop
     const docCrystal = await client.send('DOM.getDocument');
     const crystalInputNode = await client.send('DOM.querySelector', {
       nodeId: docCrystal.root.nodeId,
@@ -1171,13 +1171,9 @@ async function main() {
     const crystalUi = await client.eval(`({
       status: document.getElementById('status').textContent,
       autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
-      stopUncaughtHidden: document.getElementById('stop-uncaught-btn').hidden,
-      stopUncaughtActive: document.getElementById('stop-uncaught-btn').classList.contains('active'),
-      stopUncaughtPressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
       healHidden: document.getElementById('heal-center-status').hidden,
       supported: window.__retroIdle.getAutoFight().supported,
       profile: window.__retroIdle.getAutoFight().profile,
-      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
     })`);
     assert.match(
       crystalUi.status,
@@ -1185,13 +1181,9 @@ async function main() {
       `Unexpected Crystal status: ${crystalUi.status}`
     );
     assert.equal(crystalUi.autoFightDisabled, false, 'Auto-Fight button must enable for PM_CRYSTAL');
-    assert.equal(crystalUi.stopUncaughtHidden, false, 'Stop: Uncaught button must be visible for PM_CRYSTAL');
-    assert.equal(crystalUi.stopUncaughtActive, true, 'Stop: Uncaught button should start active');
-    assert.equal(crystalUi.stopUncaughtPressed, 'true', 'Stop: Uncaught aria-pressed should start true');
     assert.equal(crystalUi.healHidden, false, 'Heal Center status must be visible for PM_CRYSTAL');
     assert.equal(crystalUi.supported, true, 'Auto-Fight supported must be true for PM_CRYSTAL');
     assert.equal(crystalUi.profile, 'pokemon-crystal', 'Expected pokemon-crystal Auto-Fight profile');
-    assert.equal(crystalUi.stopOnUncaught, true, 'Expected stopOnUncaught to default true');
 
     // Switch rSVBK = 2, write sentinel garbage into WRAM bank 2 and valid Crystal Cherrygrove Heal Center state into WRAM bank 1
     await client.eval(`
@@ -1218,7 +1210,6 @@ async function main() {
         wBank(1, 0xd199, 7);
         wBank(1, 0xd19e, 4);
         wBank(1, 0xd19f, 5);
-        wBank(1, 0xd84c, 0x01);
         wBank(1, 0xdcd7, 1);
         wBank(1, 0xdcd8, 158);
         wBank(1, 0xdcdf + 0x00, 158);
@@ -1303,33 +1294,6 @@ async function main() {
     })`);
     assert.equal(shinyStopUi.statusText, 'Auto-Fight stopped: shiny encounter');
     assert.equal(shinyStopUi.isError, true);
-
-    // Toggle #stop-uncaught-btn off and back on
-    await client.eval(`document.getElementById('stop-uncaught-btn').click()`);
-    const uncaughtOff = await client.eval(`({
-      text: document.getElementById('stop-uncaught-btn').textContent,
-      pressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
-      activeClass: document.getElementById('stop-uncaught-btn').classList.contains('active'),
-      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
-      activeTag: document.activeElement?.tagName,
-    })`);
-    assert.equal(uncaughtOff.text, 'Fight: Uncaught');
-    assert.equal(uncaughtOff.pressed, 'false');
-    assert.equal(uncaughtOff.activeClass, false);
-    assert.equal(uncaughtOff.stopOnUncaught, false);
-    assert.notEqual(uncaughtOff.activeTag, 'BUTTON', 'Stop: Uncaught button must blur after click');
-
-    await client.eval(`document.getElementById('stop-uncaught-btn').click()`);
-    const uncaughtOn = await client.eval(`({
-      text: document.getElementById('stop-uncaught-btn').textContent,
-      pressed: document.getElementById('stop-uncaught-btn').getAttribute('aria-pressed'),
-      activeClass: document.getElementById('stop-uncaught-btn').classList.contains('active'),
-      stopOnUncaught: window.__retroIdle.getAutoFight().stopOnUncaught,
-    })`);
-    assert.equal(uncaughtOn.text, 'Stop: Uncaught');
-    assert.equal(uncaughtOn.pressed, 'true');
-    assert.equal(uncaughtOn.activeClass, true);
-    assert.equal(uncaughtOn.stopOnUncaught, true);
 
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(

@@ -603,7 +603,6 @@
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
       <button type="button" id="auto-fight-btn" disabled title="Pokémon Red / Blue / Yellow / Crystal">Auto-Fight</button>
-      <button type="button" id="stop-uncaught-btn" class="active" aria-pressed="true" hidden title="Stop Auto-Fight on uncaught wild Pokémon (shiny encounters always stop)">Stop: Uncaught</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen Game Boy controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
@@ -746,7 +745,6 @@
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
-    const stopUncaughtBtn = document.getElementById('stop-uncaught-btn');
     const touchPadBtn = document.getElementById('touch-pad-btn');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
     const touchGamepadEl = document.getElementById('touch-gamepad');
@@ -1407,23 +1405,12 @@
       }
     }
 
-    function syncStopUncaughtButton() {
-      const supported = Boolean(emu && currentAutoFightProfile?.supportsUncaughtStop);
-      const enabled = autoFight.getState().stopOnUncaught;
-      stopUncaughtBtn.hidden = !supported;
-      stopUncaughtBtn.disabled = !supported || isBusy;
-      stopUncaughtBtn.classList.toggle('active', enabled);
-      stopUncaughtBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-      stopUncaughtBtn.textContent = enabled ? 'Stop: Uncaught' : 'Fight: Uncaught';
-    }
-
     function syncAutoFightButton() {
       const supported = Boolean(emu && currentAutoFightProfile);
       const active = autoFight.getState().active;
       autoFightBtn.disabled = !supported || isBusy;
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
       autoFightBtn.classList.toggle('active', active);
-      syncStopUncaughtButton();
       syncHealCenterStatus();
       syncMiniPlayerUi();
     }
@@ -2051,14 +2038,6 @@
 
     autoFightBtn.addEventListener('click', toggleAutoFight);
 
-    stopUncaughtBtn.addEventListener('click', () => {
-      if (!emu || isBusy || !currentAutoFightProfile?.supportsUncaughtStop) return;
-      resumeAudioSafely();
-      autoFight.setStopOnUncaught(!autoFight.getState().stopOnUncaught);
-      syncStopUncaughtButton();
-      blurActiveElement();
-    });
-
     miniPlayerBtn.addEventListener('click', () => {
       resumeAudioSafely();
       if (isMiniPlayerOpen()) {
@@ -2412,10 +2391,6 @@
         supported: Boolean(emu && currentAutoFightProfile),
         start: startAutoFight,
         stop: stopAutoFight,
-        setStopOnUncaught: (val) => {
-          autoFight.setStopOnUncaught(val);
-          syncStopUncaughtButton();
-        },
         clearTrail: () => autoFight.clearTrail(),
         snapshot: () =>
           emu && currentAutoFightProfile

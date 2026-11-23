@@ -70,7 +70,6 @@ export const POKEMON_CRYSTAL_MEM = Object.freeze({
   battleType: 0xd230,       // WRAM1: wBattleType (3=BATTLETYPE_TUTORIAL)
   playerDirection: 0xd4de,  // WRAM1: wPlayerStruct + 0x08 (0=down, 4=up, 8=left, 12=right)
   playerStepType: 0xd4df,   // WRAM1: wPlayerStruct + 0x09 (0x09 = STEP_TYPE_PLAYER_JUMP)
-  statusFlags: 0xd84c,      // WRAM1: wStatusFlags (bit 0 = STATUSFLAGS_POKEDEX_F)
   mapGroup: 0xdcb5,         // WRAM1: wMapGroup (1..26)
   mapNumber: 0xdcb6,        // WRAM1: wMapNumber
   yCoord: 0xdcb7,           // WRAM1: wYCoord
@@ -78,7 +77,6 @@ export const POKEMON_CRYSTAL_MEM = Object.freeze({
   partyCount: 0xdcd7,       // WRAM1: wPartyCount (0..6)
   partySpecies: 0xdcd8,     // WRAM1: wPartySpecies (6 bytes; 0xFD = EGG)
   partyMon1: 0xdcdf,        // WRAM1: wPartyMon1 (party_struct, stride 0x30)
-  pokedexCaught: 0xde99,    // WRAM1: wPokedexCaught (32 bytes, bit = species - 1)
 });
 
 const CRYSTAL_EGG_SPECIES = 0xfd;
@@ -212,17 +210,6 @@ export function isPokeCenterMap(mapId) {
 
 export function isGen2Shiny(dv0, dv1) {
   return (dv0 & 0x2f) === 0x2a && (dv1 & 0xff) === 0xaa;
-}
-
-export function isGen2SpeciesCaught(
-  readMem,
-  species,
-  pokedexCaughtAddr = POKEMON_CRYSTAL_MEM.pokedexCaught
-) {
-  if (species < 1 || species > 251) return true;
-  const bitIndex = species - 1;
-  const byte = readMem(pokedexCaughtAddr + (bitIndex >> 3)) & 0xff;
-  return Boolean(byte & (1 << (bitIndex & 7)));
 }
 
 export function pickAttackSlot(moves, pp) {
@@ -518,7 +505,6 @@ export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
 
   const eBase = mem.enemyMon;
   const battleType = r(mem.battleType);
-  const hasPokedex = Boolean(r(mem.statusFlags) & 0x01);
   const enemySpecies = r(eBase);
   const enemyDv0 = r(eBase + 0x06);
   const enemyDv1 = r(eBase + 0x07);
@@ -539,10 +525,6 @@ export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
     maxHp: enemyMaxHp,
     dvs: [enemyDv0, enemyDv1],
     shiny: enemyReady && isGen2Shiny(enemyDv0, enemyDv1),
-    caught:
-      !hasPokedex ||
-      !enemyReady ||
-      isGen2SpeciesCaught(readMem, enemySpecies, mem.pokedexCaught),
   };
 
   const tileMenus = readBattleTilemap(r, mem.tileMap, { matchDisabled: true });
@@ -550,7 +532,6 @@ export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
   return {
     ...pos,
     battleType,
-    hasPokedex,
     party,
     battleMon,
     enemyMon,
@@ -605,7 +586,6 @@ const POKEMON_CRYSTAL_PROFILE = Object.freeze({
   mem: POKEMON_CRYSTAL_MEM,
   pokeCenterConfigs: CRYSTAL_POKECENTER_CONFIGS,
   supportsShinyStop: true,
-  supportsUncaughtStop: true,
   readOverworldPos: readPokemonCrystalOverworldPos,
   readSnapshot: readPokemonCrystalSnapshot,
 });
@@ -709,7 +689,7 @@ function isValidOverworldCoord(snap) {
   return true;
 }
 
-export function createAutoFight(options = {}) {
+export function createAutoFight() {
   let active = false;
   let phase = 'idle';
   let stopReason = null;
@@ -717,7 +697,6 @@ export function createAutoFight(options = {}) {
   let initialParty = [];
   let wasInBattle = false;
   let battleMonReady = false;
-  let stopOnUncaught = Boolean(options.stopOnUncaught ?? true);
   let encounterChecked = false;
   let dirIndex = 0;
   let atAnchorFrames = 0;
@@ -1911,9 +1890,6 @@ export function createAutoFight(options = {}) {
       if (snap.enemyMon.shiny) {
         return stop('shiny encounter');
       }
-      if (stopOnUncaught && snap.enemyMon.caught === false) {
-        return stop('uncaught encounter');
-      }
     }
 
     if (
@@ -2001,9 +1977,6 @@ export function createAutoFight(options = {}) {
     clearTrail,
     exportTrail,
     importTrail,
-    setStopOnUncaught: (val) => {
-      stopOnUncaught = Boolean(val);
-    },
     getState: () => ({
       active,
       phase,
@@ -2016,7 +1989,6 @@ export function createAutoFight(options = {}) {
       hasHealPath: hasHealPath(active ? anchor?.map : prevOverworld?.map ?? anchor?.map),
       trailLength: trail.length,
       healSubphase,
-      stopOnUncaught,
     }),
   };
 }
