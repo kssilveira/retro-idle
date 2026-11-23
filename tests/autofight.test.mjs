@@ -2523,3 +2523,94 @@ test('RAM-backed Pokémon Emerald full round-trip Auto-Fight, 2x2 move grid, evo
   res = afLeague.step(profile.readSnapshot(em.readMem));
   assert.equal(res.buttons.left, true);
 });
+
+test('Emerald MoveSaveBlocks_ResetHeap transitions hold neutral and do not trigger map changed or corrupt trail', () => {
+  const profile = getAutoFightProfile('POKEMON EMER', 'BPEE');
+  const em = createEmeraldMemory();
+  const mem = em.mem;
+
+  em.write8(mem.gPlayerPartyCount, 1);
+  em.writePartyMon(0, {
+    personality: 2,
+    otId: 0x01020304,
+    species: 277,
+    hp: 21,
+    maxHp: 21,
+    level: 6,
+    moves: [1, 0, 0, 0],
+    pp: [35, 0, 0, 0],
+  });
+
+  // 1. Check inTransition across CB2_InitBattle, CB2_ReturnToField, CB2_LoadMap, and CB2_Overworld
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, cb2: mem.cb2InitBattle });
+  assert.equal(profile.readOverworldPos(em.readMem).inTransition, true);
+
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, cb2: 0x080860f4 }); // CB2_ReturnToField
+  assert.equal(profile.readOverworldPos(em.readMem).inTransition, true);
+
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, cb2: 0x08085ffc }); // CB2_LoadMap
+  assert.equal(profile.readOverworldPos(em.readMem).inTransition, true);
+
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, cb2: mem.cb2Overworld });
+  assert.equal(profile.readOverworldPos(em.readMem).inTransition, false);
+
+  // 2. Passive Heal Center trail survives mid-copy garbage during CB2_LoadMap
+  const afObserve = createAutoFight();
+  em.setOverworld({ mapGroup: 2, mapNumber: 2, x: 7, y: 8, tileset: 61, dir: 1, cb2: mem.cb2Overworld });
+  afObserve.observe(profile.readOverworldPos(em.readMem));
+  em.setOverworld({ mapGroup: 0, mapNumber: 10, x: 6, y: 16, tileset: 11, dir: 1, cb2: mem.cb2Overworld });
+  afObserve.observe(profile.readOverworldPos(em.readMem));
+  assert.equal(afObserve.getState().trailLength, 1);
+
+  // Simulate mid-copy garbage (mapGroup=6, mapNumber=0) during CB2_LoadMap -> ignored!
+  em.setOverworld({ mapGroup: 6, mapNumber: 0, x: 6, y: 16, tileset: 11, dir: 1, cb2: 0x08085ffc });
+  afObserve.observe(profile.readOverworldPos(em.readMem));
+  assert.equal(afObserve.getState().pokeCenterMap, 0x10202);
+  assert.equal(afObserve.getState().trailLength, 1);
+
+  // 3. Starting Auto-Fight during inTransition defers anchor until CB2_Overworld settles,
+  // and mid-copy garbage during CB2_InitBattle holds neutral then enters fighting cleanly
+  const af = createAutoFight();
+  em.setOverworld({ mapGroup: 6, mapNumber: 0, x: 13, y: 3, cb2: 0x080860f4 }); // garbage inBattle=0 transition
+  af.start(profile.readSnapshot(em.readMem));
+  assert.equal(af.getState().anchor, null);
+
+  let res = af.step(profile.readSnapshot(em.readMem));
+  assert.equal(res.active, true);
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+
+  // Settle on Route 101 (0, 16) in CB2_Overworld -> anchor latches (0, 16)
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, cb2: mem.cb2Overworld });
+  res = af.step(profile.readSnapshot(em.readMem));
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'moving');
+  assert.deepEqual(af.getState().anchor, { map: 0x10010, x: 13, y: 3 });
+
+  // Wild encounter triggers CB2_InitBattle with mid-copy garbage (6, 0) while inBattle is still 0
+  em.setOverworld({ mapGroup: 6, mapNumber: 0, x: 13, y: 3, inBattle: 0, cb2: mem.cb2InitBattle });
+  res = af.step(profile.readSnapshot(em.readMem));
+  assert.equal(res.active, true);
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+  assert.equal(af.getState().stopReason, null);
+
+  // Battle flag becomes 1 -> enters fighting cleanly
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 13, y: 3, inBattle: 1, cb2: 0x08036fac });
+  em.writeBattleMon({
+    species: 277,
+    hp: 21,
+    maxHp: 21,
+    level: 6,
+    moves: [1, 0, 0, 0],
+    pp: [35, 0, 0, 0],
+  });
+  res = af.step(profile.readSnapshot(em.readMem));
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'fighting');
+
+  // 4. Genuine overworld map change in CB2_Overworld STILL stops with 'map changed'
+  em.setOverworld({ mapGroup: 0, mapNumber: 10, x: 10, y: 19, inBattle: 0, cb2: mem.cb2Overworld });
+  res = af.step(profile.readSnapshot(em.readMem));
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'map changed');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+});

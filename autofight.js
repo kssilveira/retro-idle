@@ -96,6 +96,8 @@ export const POKEMON_EMERALD_MEM = Object.freeze({
   gStringVar4: 0x02021fc4,
   handleInputChooseAction: 0x08057588,
   handleInputChooseMove: 0x08057bfc,
+  cb2Overworld: 0x08085e5c,
+  cb2InitBattle: 0x08036760,
   cb2WhiteOut: 0x08085f58,
   cb2InitLearnMove: 0x081606a0,
   cb2EvolutionSceneStart: 0x0813d9b0,
@@ -641,11 +643,19 @@ export function readPokemonEmeraldOverworldPos(readMem, mem = POKEMON_EMERALD_ME
     isInBattle = (battleTypeFlags & EMERALD_NON_AUTO_BATTLE_MASK) !== 0 ? 2 : 1;
   }
 
+  const inTransition =
+    isInBattle === 0 &&
+    !inCutscene &&
+    cb2 !== 0 &&
+    cb2 !== mem.cb2Overworld &&
+    cb2 !== mem.cb2InitLearnMove;
+
   const sb1 = r32(mem.gSaveBlock1Ptr);
   if (sb1 < 0x02000000 || sb1 > 0x0203f000) {
     return {
       isInBattle,
       inCutscene,
+      inTransition: isInBattle === 0 && !inCutscene,
       map: 0,
       mapGroup: 0,
       mapNumber: 0,
@@ -703,6 +713,7 @@ export function readPokemonEmeraldOverworldPos(readMem, mem = POKEMON_EMERALD_ME
   return {
     isInBattle,
     inCutscene,
+    inTransition,
     map,
     mapGroup,
     mapNumber,
@@ -1031,7 +1042,13 @@ export function createAutoFight() {
   }
 
   function observe(snap) {
-    if (active || !snap || snap.isInBattle !== 0 || (snap.partyCount ?? 1) === 0) {
+    if (
+      active ||
+      !snap ||
+      snap.isInBattle !== 0 ||
+      snap.inTransition ||
+      (snap.partyCount ?? 1) === 0
+    ) {
       return;
     }
     if (!isValidOverworldCoord(snap)) {
@@ -1190,7 +1207,7 @@ export function createAutoFight() {
     active = true;
     stopReason = null;
     phase = snap.isInBattle === 1 ? 'fighting' : 'moving';
-    anchor = { map: snap.map, x: snap.x, y: snap.y };
+    anchor = snap.inTransition ? null : { map: snap.map, x: snap.x, y: snap.y };
     wasInBattle = snap.isInBattle === 1;
     battleMonReady =
       snap.isInBattle === 1 &&
@@ -1200,7 +1217,7 @@ export function createAutoFight() {
     dirIndex = 0;
     atAnchorFrames = 0;
     returnStuckFrames = 0;
-    lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    lastPos = anchor ? { ...anchor } : { map: -1, x: 0, y: 0 };
     overworldCooldown = 0;
     pulse = null;
     cooldown = 0;
@@ -1538,6 +1555,10 @@ export function createAutoFight() {
     if (!lead) {
       return stop('fainted');
     }
+    if (!anchor) {
+      anchor = { map: snap.map, x: snap.x, y: snap.y };
+      lastPos = { map: snap.map, x: snap.x, y: snap.y };
+    }
     const healReason = getHealTriggerReason(lead, maskPpUps);
     if (healReason) {
       if (hasHealPath(anchor.map)) {
@@ -1627,6 +1648,9 @@ export function createAutoFight() {
         if (activePulse) return activePulse;
         return startPulse('a', 3, 12);
       }
+      if (snap.inTransition) {
+        return neutral();
+      }
       if (wasInBattle) {
         wasInBattle = false;
         battleMonReady = false;
@@ -1664,6 +1688,9 @@ export function createAutoFight() {
       battleMonReady = false;
       pulse = null;
       cooldown = 0;
+      if (!anchor && !snap.inTransition && isValidOverworldCoord(snap)) {
+        anchor = { map: snap.map, x: snap.x, y: snap.y };
+      }
       if (isValidOverworldCoord(snap)) {
         lastPos = { map: snap.map, x: snap.x, y: snap.y };
       }
@@ -1695,7 +1722,7 @@ export function createAutoFight() {
       if (!battleMonReady) return neutral();
       const healReason = getHealTriggerReason(snap.battleMon, maskPpUps);
       if (healReason) {
-        if (hasHealPath(anchor.map)) {
+        if (hasHealPath(anchor?.map ?? snap.map)) {
           beginFleeing('returning');
           return startPulse('b', 3, 10);
         }
@@ -1730,7 +1757,7 @@ export function createAutoFight() {
       if (!battleMonReady) return neutral();
       const healReason = getHealTriggerReason(snap.battleMon, maskPpUps);
       if (healReason) {
-        if (hasHealPath(anchor.map)) {
+        if (hasHealPath(anchor?.map ?? snap.map)) {
           beginFleeing('returning');
           return stepFleeMainMenu(snap);
         }
@@ -1768,7 +1795,9 @@ export function createAutoFight() {
       pokeCenterName:
         pokeCenterMap !== null ? ALL_POKECENTER_CONFIGS[pokeCenterMap]?.name ?? null : null,
       inPokeCenter: wasInPokeCenter,
-      hasHealPath: hasHealPath(active ? anchor?.map : prevOverworld?.map ?? anchor?.map),
+      hasHealPath: hasHealPath(
+        active ? (anchor?.map ?? prevOverworld?.map) : (prevOverworld?.map ?? anchor?.map)
+      ),
       trailLength: trail.length,
       healSubphase,
     }),
