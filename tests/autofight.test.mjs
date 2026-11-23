@@ -9,7 +9,6 @@ import {
   createAutoFight,
   encodeCrystalMapId,
   getAutoFightProfile,
-  isGen2Shiny,
   isPokemonCrystalTitle,
   isPokemonRedBlueTitle,
   isPokemonYellowTitle,
@@ -1811,15 +1810,6 @@ function createCrystalMemory() {
     write16(base + 0x10, mon.hp ?? 0);
     write16(base + 0x12, mon.maxHp ?? 0);
   };
-  const writeEnemyMon = (mon) => {
-    const base = mem.enemyMon;
-    ram[base] = mon.species ?? 0;
-    ram[base + 0x06] = mon.dvs?.[0] ?? 0;
-    ram[base + 0x07] = mon.dvs?.[1] ?? 0;
-    ram[base + 0x0d] = mon.level ?? 0;
-    write16(base + 0x10, mon.hp ?? 0);
-    write16(base + 0x12, mon.maxHp ?? 0);
-  };
   const setOverworld = ({
     mapGroup,
     mapNumber,
@@ -1831,10 +1821,8 @@ function createCrystalMemory() {
     facing = 0x00,
     stepType = 0x04,
     battleMode = 0,
-    battleType = 0,
   }) => {
     ram[mem.battleMode] = battleMode;
-    ram[mem.battleType] = battleType;
     ram[mem.mapGroup] = mapGroup;
     ram[mem.mapNumber] = mapNumber;
     ram[mem.yCoord] = y;
@@ -1854,7 +1842,6 @@ function createCrystalMemory() {
     clearTileMap,
     writePartyMon,
     writeBattleMon,
-    writeEnemyMon,
     setOverworld,
   };
 }
@@ -1875,24 +1862,8 @@ test('getAutoFightProfile and isPokemonCrystalTitle recognize PM_CRYSTAL and POK
   assert.equal(crystal.id, 'pokemon-crystal');
   assert.equal(crystal.name, 'Pokémon Crystal');
   assert.equal(crystal.mem, POKEMON_CRYSTAL_MEM);
-  assert.equal(crystal.supportsShinyStop, true);
   assert.equal(crystal.pokeCenterConfigs, CRYSTAL_POKECENTER_CONFIGS);
   assert.equal(Object.keys(CRYSTAL_POKECENTER_CONFIGS).length, 22);
-});
-
-test('isGen2Shiny evaluates Gen 2 DVs accurately', () => {
-  // Valid shiny Attack DVs: 2,3,6,7,10,11,14,15; Def=10, Spd=10, Spc=10
-  for (const atk of [2, 3, 6, 7, 10, 11, 14, 15]) {
-    assert.equal(isGen2Shiny((atk << 4) | 0x0a, 0xaa), true, `Expected atk=${atk} shiny`);
-  }
-  // Non-shiny Attack DVs: 0,1,4,5,8,9,12,13
-  for (const atk of [0, 1, 4, 5, 8, 9, 12, 13]) {
-    assert.equal(isGen2Shiny((atk << 4) | 0x0a, 0xaa), false, `Expected atk=${atk} non-shiny`);
-  }
-  // Wrong Def, Spd, or Spc nibble
-  assert.equal(isGen2Shiny(0xab, 0xaa), false);
-  assert.equal(isGen2Shiny(0xaa, 0xba), false);
-  assert.equal(isGen2Shiny(0xaa, 0xab), false);
 });
 
 test('pickAttackSlot skips Gen 2 non-attack/conditional moves while picking Gen 2 attacking moves', () => {
@@ -1908,7 +1879,7 @@ test('pickAttackSlot skips Gen 2 non-attack/conditional moves while picking Gen 
   assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 0, 15]), 3);
 });
 
-test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 WRAM, Eggs, jumps, Disabled box, and enemy status', () => {
+test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 WRAM, Eggs, jumps, and Disabled box', () => {
   const cm = createCrystalMemory();
   cm.setOverworld({
     mapGroup: 26,
@@ -1921,7 +1892,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
     facing: 0x0c,
     stepType: 0x09, // STEP_TYPE_PLAYER_JUMP
     battleMode: 1,
-    battleType: 0,
   });
   cm.ram[cm.mem.partyCount] = 2;
   cm.writePartyMon(0, {
@@ -1948,13 +1918,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
     level: 6,
     hp: 21,
     maxHp: 23,
-  });
-  cm.writeEnemyMon({
-    species: 16, // Pidgey
-    dvs: [0xea, 0xaa], // shiny!
-    level: 3,
-    hp: 14,
-    maxHp: 14,
   });
 
   cm.clearTileMap();
@@ -1986,8 +1949,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
   assert.equal(snap.party[1].pp[2], 20);
   assert.equal(snap.battleMon.hp, 21);
   assert.equal(snap.battleMon.maxHp, 23);
-  assert.equal(snap.enemyMon.species, 16);
-  assert.equal(snap.enemyMon.shiny, true);
   assert.deepEqual(snap.fightPos, { row: 14, col: 10 });
   assert.equal(snap.hasRun, true);
   assert.deepEqual(snap.cursorPos, { row: 14, col: 9 });
@@ -1999,106 +1960,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
   const disabledSnap = readPokemonCrystalSnapshot(cm.readMem);
   assert.equal(disabledSnap.hasTypeBox, true);
   assert.deepEqual(disabledSnap.cursorPos, { row: 13, col: 5 });
-});
-
-test('Crystal shiny encounter stop honors tutorial, ambush, and Ditto transform rules', () => {
-  const cm = createCrystalMemory();
-  const profile = getAutoFightProfile('PM_CRYSTAL');
-
-  const setupRoute30 = () => {
-    cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
-    cm.ram[cm.mem.partyCount] = 1;
-    cm.writePartyMon(0, {
-      species: 158,
-      hp: 21,
-      maxHp: 21,
-      level: 5,
-      moves: [10, 55, 0, 0],
-      pp: [35, 25, 0, 0],
-    });
-  };
-
-  // 1. Shiny wild mon stops immediately
-  setupRoute30();
-  const afShiny = createAutoFight();
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  afShiny.start(profile.readSnapshot(cm.readMem));
-
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, battleMode: 1 });
-  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 5, hp: 21, maxHp: 21 });
-  cm.writeEnemyMon({ species: 16, dvs: [0x2a, 0xaa], level: 3, hp: 14, maxHp: 14 });
-  let res = afShiny.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'shiny encounter');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-
-  // 2. Shiny wild mon stops even during returning ambush (and preserves trail)
-  const afAmbush = createAutoFight();
-  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
-  afAmbush.observe(profile.readOverworldPos(cm.readMem));
-  cm.setOverworld({ mapGroup: 26, mapNumber: 3, x: 29, y: 4, tileset: 1, mapWidth: 40, mapHeight: 18 });
-  afAmbush.observe(profile.readOverworldPos(cm.readMem));
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  afAmbush.observe(profile.readOverworldPos(cm.readMem));
-
-  // Start out of PP -> returning, then ambushed by shiny Sentret (161) -> must NOT flee!
-  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 5, moves: [10, 55, 0, 0], pp: [0, 0, 0, 0] });
-  afAmbush.start(profile.readSnapshot(cm.readMem));
-  res = afAmbush.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.phase, 'returning');
-
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 20, tileset: 1, battleMode: 1 });
-  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [0, 0, 0, 0], level: 5, hp: 21, maxHp: 21 });
-  cm.writeEnemyMon({ species: 161, dvs: [0x2a, 0xaa], level: 3, hp: 14, maxHp: 14 });
-  res = afAmbush.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'shiny encounter');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-  assert.equal(afAmbush.getState().hasHealPath, true);
-
-  // 3. Does NOT stop for shiny during BATTLETYPE_TUTORIAL (3) or for non-shiny wild mon
-  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 5, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 5, hp: 21, maxHp: 21 });
-
-  for (const scenario of [
-    { battleType: 3, dvs: [0x2a, 0xaa] },
-    { battleType: 0, dvs: [0x12, 0x34] },
-  ]) {
-    const afSkip = createAutoFight();
-    cm.setOverworld({
-      mapGroup: 26,
-      mapNumber: 1,
-      x: 8,
-      y: 20,
-      tileset: 1,
-      battleMode: 0,
-      battleType: scenario.battleType,
-    });
-    afSkip.start(profile.readSnapshot(cm.readMem));
-    cm.setOverworld({
-      mapGroup: 26,
-      mapNumber: 1,
-      x: 8,
-      y: 20,
-      tileset: 1,
-      battleMode: 1,
-      battleType: scenario.battleType,
-    });
-    cm.writeEnemyMon({ species: 161, dvs: scenario.dvs, level: 3, hp: 14, maxHp: 14 });
-    const out = afSkip.step(profile.readSnapshot(cm.readMem));
-    assert.equal(out.active, true, `Should keep fighting for ${JSON.stringify(scenario)}`);
-  }
-
-  // 4. Wild Ditto transforming into shiny DVs on turn 2 must NOT false-trigger 'shiny encounter'
-  const afDitto = createAutoFight();
-  cm.setOverworld({ mapGroup: 10, mapNumber: 5, x: 5, y: 5, tileset: 1, battleMode: 0 });
-  afDitto.start(profile.readSnapshot(cm.readMem));
-  cm.setOverworld({ mapGroup: 10, mapNumber: 5, x: 5, y: 5, tileset: 1, battleMode: 1 });
-  cm.writeEnemyMon({ species: 132, dvs: [0x12, 0x34], level: 10, hp: 25, maxHp: 25 });
-  assert.equal(afDitto.step(profile.readSnapshot(cm.readMem)).active, true);
-  // Turn 2: Ditto uses Transform and copies player's shiny DVs
-  cm.writeEnemyMon({ species: 132, dvs: [0xea, 0xaa], level: 10, hp: 25, maxHp: 25 });
-  assert.equal(afDitto.step(profile.readSnapshot(cm.readMem)).active, true);
 });
 
 test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg + Indigo Plateau + Crystal ledge)', () => {
@@ -2161,7 +2022,6 @@ test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg 
     hp: 21,
     maxHp: 21,
   });
-  cm.writeEnemyMon({ species: 16, dvs: [0x11, 0x22], level: 3, hp: 14, maxHp: 14 });
   cm.clearTileMap();
   cm.writeTileText(14, 10, 'FIGHT');
   cm.writeTileText(16, 16, 'RUN');
@@ -2532,7 +2392,6 @@ test('RAM-backed Pokémon Crystal blackout recovery supports interior and exteri
   const { cm: cmIn, af: afIn } = setupCrystalToRoute30();
   cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
   cmIn.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  cmIn.writeEnemyMon({ species: 16, dvs: [0x11, 0x22], level: 3, hp: 14, maxHp: 14 });
   assert.equal(afIn.step(profile.readSnapshot(cmIn.readMem)).phase, 'fighting');
   for (let i = 0; i < 10; i++) afIn.step(profile.readSnapshot(cmIn.readMem));
 
@@ -2590,19 +2449,10 @@ test('RAM-backed Pokémon Crystal blackout recovery supports interior and exteri
   assert.equal(res.phase, 'moving');
   assert.deepEqual(afIn.getState().anchor, { map: encodeCrystalMapId(26, 1), x: 8, y: 52 });
 
-  // Verify encounterChecked was reset so a new shiny encounter still stops cleanly
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
-  cmIn.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  cmIn.writeEnemyMon({ species: 16, dvs: [0xea, 0xaa], level: 3, hp: 14, maxHp: 14 });
-  const shinyAfterRecover = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(shinyAfterRecover.active, false);
-  assert.equal(shinyAfterRecover.stopReason, 'shiny encounter');
-
   // Part B: Exterior spawn at Cherrygrove City (26, 3, 29, 4)
   const { cm: cmExt, af: afExt } = setupCrystalToRoute30();
   cmExt.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
   cmExt.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  cmExt.writeEnemyMon({ species: 16, dvs: [0x11, 0x22], level: 3, hp: 14, maxHp: 14 });
   afExt.step(profile.readSnapshot(cmExt.readMem));
   cmExt.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 0, maxHp: 21 });
   cmExt.writePartyMon(0, { species: 158, hp: 0, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
@@ -2648,7 +2498,6 @@ test('RAM-backed multi-Pokémon wild battle faint switch navigates Party Screen 
   // Battle starts with Totodile
   cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, battleMode: 1 });
   cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  cm.writeEnemyMon({ species: 16, dvs: [0x11, 0x22], level: 3, hp: 14, maxHp: 14 });
   assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'fighting');
   for (let i = 0; i < 10; i++) af.step(profile.readSnapshot(cm.readMem));
 

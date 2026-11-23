@@ -65,9 +65,7 @@ export const POKEMON_CRYSTAL_MEM = Object.freeze({
   curMapTileset: 0xd199,    // WRAM1: wMapTileset (TILESET_POKECENTER = 7)
   curMapHeight: 0xd19e,     // WRAM1: wMapHeight (in blocks; *2 = tiles)
   curMapWidth: 0xd19f,      // WRAM1: wMapWidth (in blocks; *2 = tiles)
-  enemyMon: 0xd206,         // WRAM1: wEnemyMon battle_struct (0x20 bytes)
   battleMode: 0xd22d,       // WRAM1: wBattleMode (0=overworld, 1=wild, 2=trainer)
-  battleType: 0xd230,       // WRAM1: wBattleType (3=BATTLETYPE_TUTORIAL)
   playerDirection: 0xd4de,  // WRAM1: wPlayerStruct + 0x08 (0=down, 4=up, 8=left, 12=right)
   playerStepType: 0xd4df,   // WRAM1: wPlayerStruct + 0x09 (0x09 = STEP_TYPE_PLAYER_JUMP)
   mapGroup: 0xdcb5,         // WRAM1: wMapGroup (1..26)
@@ -81,7 +79,6 @@ export const POKEMON_CRYSTAL_MEM = Object.freeze({
 
 const CRYSTAL_EGG_SPECIES = 0xfd;
 const CRYSTAL_STEP_TYPE_PLAYER_JUMP = 0x09;
-const CRYSTAL_BATTLETYPE_TUTORIAL = 0x03;
 
 const STANDARD_POKECENTER_CONFIG = Object.freeze({
   standX: 3,
@@ -206,10 +203,6 @@ const FAINTED_STALL_REASON = 'fainted recovery stalled';
 
 export function isPokeCenterMap(mapId) {
   return Object.hasOwn(ALL_POKECENTER_CONFIGS, mapId);
-}
-
-export function isGen2Shiny(dv0, dv1) {
-  return (dv0 & 0x2f) === 0x2a && (dv1 & 0xff) === 0xaa;
 }
 
 export function pickAttackSlot(moves, pp) {
@@ -503,39 +496,12 @@ export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
     maxHp: r16(bBase + 0x12),
   };
 
-  const eBase = mem.enemyMon;
-  const battleType = r(mem.battleType);
-  const enemySpecies = r(eBase);
-  const enemyDv0 = r(eBase + 0x06);
-  const enemyDv1 = r(eBase + 0x07);
-  const enemyLevel = r(eBase + 0x0d);
-  const enemyHp = r16(eBase + 0x10);
-  const enemyMaxHp = r16(eBase + 0x12);
-  const enemyReady =
-    pos.isInBattle === 1 &&
-    battleType !== CRYSTAL_BATTLETYPE_TUTORIAL &&
-    enemySpecies >= 1 &&
-    enemySpecies <= 251 &&
-    enemyMaxHp > 0 &&
-    enemyHp > 0;
-  const enemyMon = {
-    species: enemySpecies,
-    level: enemyLevel,
-    hp: enemyHp,
-    maxHp: enemyMaxHp,
-    dvs: [enemyDv0, enemyDv1],
-    shiny: enemyReady && isGen2Shiny(enemyDv0, enemyDv1),
-  };
-
   const tileMenus = readBattleTilemap(r, mem.tileMap, { matchDisabled: true });
 
   return {
     ...pos,
-    battleType,
     party,
     battleMon,
-    enemyMon,
-    enemyHp,
     ...tileMenus,
   };
 }
@@ -585,7 +551,6 @@ const POKEMON_CRYSTAL_PROFILE = Object.freeze({
   name: 'Pokémon Crystal',
   mem: POKEMON_CRYSTAL_MEM,
   pokeCenterConfigs: CRYSTAL_POKECENTER_CONFIGS,
-  supportsShinyStop: true,
   readOverworldPos: readPokemonCrystalOverworldPos,
   readSnapshot: readPokemonCrystalSnapshot,
 });
@@ -697,7 +662,6 @@ export function createAutoFight() {
   let initialParty = [];
   let wasInBattle = false;
   let battleMonReady = false;
-  let encounterChecked = false;
   let dirIndex = 0;
   let atAnchorFrames = 0;
   let returnStuckFrames = 0;
@@ -1114,7 +1078,6 @@ export function createAutoFight() {
       moves: [...m.moves],
     }));
     wasInBattle = snap.isInBattle === 1;
-    encounterChecked = false;
     battleMonReady =
       snap.isInBattle === 1 &&
       snap.battleMon.maxHp > 0 &&
@@ -1200,7 +1163,6 @@ export function createAutoFight() {
     healSubphase = null;
     wasInBattle = snap.isInBattle === 1;
     battleMonReady = false;
-    encounterChecked = false;
     pulse = null;
     cooldown = 0;
     stuckFrames = 0;
@@ -1298,7 +1260,6 @@ export function createAutoFight() {
   function beginHealing(snap, party, nextSubphase = 'to_nurse') {
     wasInBattle = false;
     battleMonReady = false;
-    encounterChecked = false;
     phase = 'healing';
     travelMode = null;
     healSubphase = nextSubphase;
@@ -1727,7 +1688,6 @@ export function createAutoFight() {
           }
           wasInBattle = false;
           battleMonReady = false;
-          encounterChecked = false;
           phase = 'walking_back';
           travelMode = 'walking_back';
           pathIdx = startIdx;
@@ -1838,7 +1798,6 @@ export function createAutoFight() {
       if (wasInBattle) {
         wasInBattle = false;
         battleMonReady = false;
-        encounterChecked = false;
         pulse = null;
         cooldown = 0;
         atAnchorFrames = 0;
@@ -1871,24 +1830,10 @@ export function createAutoFight() {
     if (!wasInBattle) {
       wasInBattle = true;
       battleMonReady = false;
-      encounterChecked = false;
       pulse = null;
       cooldown = 0;
       if (isValidOverworldCoord(snap)) {
         lastPos = { map: snap.map, x: snap.x, y: snap.y };
-      }
-    }
-
-    if (
-      !encounterChecked &&
-      snap.enemyMon &&
-      snap.enemyMon.species > 0 &&
-      snap.enemyMon.maxHp > 0 &&
-      snap.enemyMon.hp > 0
-    ) {
-      encounterChecked = true;
-      if (snap.enemyMon.shiny) {
-        return stop('shiny encounter');
       }
     }
 

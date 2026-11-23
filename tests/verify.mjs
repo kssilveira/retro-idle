@@ -1148,7 +1148,7 @@ async function main() {
     assert.equal(yellowCheck.snapshot.party[0].moves[0], 84);
     assert.equal(yellowCheck.snapshot.party[0].pp[0], 30);
 
-    // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + shiny stop
+    // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + trainer battle stop
     const docCrystal = await client.send('DOM.getDocument');
     const crystalInputNode = await client.send('DOM.querySelector', {
       nodeId: docCrystal.root.nodeId,
@@ -1202,7 +1202,6 @@ async function main() {
         wBank(2, 0xdcd7, 0);
         // Bank 1 valid Cherrygrove PokéCenter (26, 5)
         wBank(1, 0xd22d, 0);
-        wBank(1, 0xd230, 0);
         wBank(1, 0xdcb5, 26);
         wBank(1, 0xdcb6, 5);
         wBank(1, 0xdcb7, 7);
@@ -1251,7 +1250,7 @@ async function main() {
     assert.equal(crystalCheck.snapshot.party[0].moves[0], 55);
     assert.equal(crystalCheck.snapshot.party[0].pp[0], 25);
 
-    // Inject shiny wild encounter into WRAM bank 1 and battleMon into WRAM bank 0 -> verify automatic shiny stop
+    // Inject trainer battle into WRAM bank 1 (while WRAM bank 2 sentinel stays 0) -> verify automatic stop
     await client.eval(`
       (() => {
         const emu = window.__retroIdle.getEmulator();
@@ -1260,15 +1259,8 @@ async function main() {
         const wBank = (bank, addr, val) => {
           wram[ptr + ((bank << 12) | (addr & 0x0fff))] = val;
         };
-        wBank(1, 0xd22d, 1); // wBattleMode = wild
-        wBank(1, 0xd206 + 0x00, 16); // wEnemyMonSpecies = Pidgey
-        wBank(1, 0xd206 + 0x06, 0xea); // shiny DVs
-        wBank(1, 0xd206 + 0x07, 0xaa);
-        wBank(1, 0xd206 + 0x0d, 3);
-        wBank(1, 0xd206 + 0x10, 0);
-        wBank(1, 0xd206 + 0x11, 12);
-        wBank(1, 0xd206 + 0x12, 0);
-        wBank(1, 0xd206 + 0x13, 12);
+        wBank(2, 0xd22d, 0); // bank 2 sentinel = overworld
+        wBank(1, 0xd22d, 2); // bank 1 wBattleMode = trainer battle
         wBank(0, 0xc62c + 0x00, 158);
         wBank(0, 0xc62c + 0x02, 55);
         wBank(0, 0xc62c + 0x08, 25);
@@ -1283,20 +1275,20 @@ async function main() {
     await waitFor(
       async () =>
         await client.eval(
-          `window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'shiny encounter'`
+          `window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'trainer battle'`
         ),
       6000,
       30
     );
-    const shinyStopUi = await client.eval(`({
+    const trainerStopUi = await client.eval(`({
       statusText: document.getElementById('auto-fight-status').textContent,
       isError: document.getElementById('auto-fight-status').classList.contains('error'),
     })`);
-    assert.equal(shinyStopUi.statusText, 'Auto-Fight stopped: shiny encounter');
-    assert.equal(shinyStopUi.isError, true);
+    assert.equal(trainerStopUi.statusText, 'Auto-Fight stopped: trainer battle');
+    assert.equal(trainerStopUi.isError, true);
 
-    const prefsAfterShinyStop = await client.eval(`JSON.parse(localStorage.getItem('retro-idle:prefs') || 'null')`);
-    assert.equal(prefsAfterShinyStop?.autoFightRomId, null, 'Automatic shiny stop must clear persisted Auto-Fight state');
+    const prefsAfterAutoStop = await client.eval(`JSON.parse(localStorage.getItem('retro-idle:prefs') || 'null')`);
+    assert.equal(prefsAfterAutoStop?.autoFightRomId, null, 'Automatic stop must clear persisted Auto-Fight state');
 
     // UI button persistence across page refresh (Speed, Touch Pad, Auto-Fight)
     await client.eval(`
@@ -1474,7 +1466,7 @@ async function main() {
         pokeCenterName: crystalCheck.pokeCenterName,
         healStatus: crystalCheck.healStatus,
         bank2MapGroup: crystalCheck.bank2MapGroup,
-        shinyStop: shinyStopUi.statusText,
+        trainerStop: trainerStopUi.statusText,
       },
       prefsRefreshCheck,
       mobileCheck: {
