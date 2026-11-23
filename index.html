@@ -2640,7 +2640,15 @@
 
     saveStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        await dbPut(`manualState:${currentRomId}`, emu.getSaveState());
+        const stateBytes = emu.getSaveState();
+        const writes = [dbPut(`manualState:${currentRomId}`, stateBytes)];
+        if (currentAutoFightProfile) {
+          const trail = autoFight.exportTrail();
+          writes.push(
+            trail ? dbPut(`manualPokeTrail:${currentRomId}`, trail) : dbDelete(`manualPokeTrail:${currentRomId}`)
+          );
+        }
+        await Promise.all(writes);
         hasManualSave = true;
         return ' — state saved';
       })
@@ -2649,11 +2657,17 @@
     loadStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
         stopAutoFight();
-        autoFight.clearTrail();
-        const state = await dbGet(`manualState:${currentRomId}`);
+        const [state, savedTrail] = await Promise.all([
+          dbGet(`manualState:${currentRomId}`),
+          currentAutoFightProfile ? dbGet(`manualPokeTrail:${currentRomId}`) : Promise.resolve(null),
+        ]);
         if (!state || !emu.loadState(state)) {
           hasManualSave = false;
           throw new Error('No compatible manual save state found');
+        }
+        autoFight.clearTrail();
+        if (currentAutoFightProfile && savedTrail) {
+          autoFight.importTrail(savedTrail);
         }
         emu.resume();
         return ' — state loaded';
@@ -3059,6 +3073,7 @@
         start: startAutoFight,
         stop: stopAutoFight,
         clearTrail: () => autoFight.clearTrail(),
+        exportTrail: () => autoFight.exportTrail(),
         snapshot: () =>
           emu && currentAutoFightProfile
             ? currentAutoFightProfile.readSnapshot((a) => emu.readWramLinear(a))

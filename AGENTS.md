@@ -67,9 +67,10 @@ We originally considered `wasmboy` first with `binjgb` as the fallback, then swi
   - `` `autoState:${romId}` `` → `Uint8Array`
   - `` `manualState:${romId}` `` → `Uint8Array`
   - `` `pokeTrail:${romId}` `` → `{ pokeCenterMap, trail }`
+  - `` `manualPokeTrail:${romId}` `` → `{ pokeCenterMap, trail }`
 - **`localStorage['retro-idle:unload']`:** JSON `{ romId, state, sram, pokeTrail }` (`state` and `sram` are base64 strings; `pokeTrail` is `{ pokeCenterMap, trail } | null`).
 - **`localStorage['retro-idle:prefs']`:** JSON `{ speed, touchPad, autoFightRomId, muted }` persisting selected Speed (`1|2|4|10|20`), explicit Touch Pad override (`boolean | null`), active Auto-Fight ROM CRC32 (`string | null`), and mute state (`boolean`, defaulting to `true`) across page refreshes.
-- Both **Reset** and **Import `.sav`** (`rebootWithSram`) delete `autoState:${currentRomId}` and `pokeTrail:${currentRomId}` and clear any matching `localStorage['retro-idle:unload']` entry so reloading does not revert to pre-reset/pre-import state. `pokeTrail:${currentRomId}` is only imported back in `loadRom` when `autoState` restores, and Load State clears the active in-memory trail.
+- Both **Reset** and **Import `.sav`** (`rebootWithSram`) delete `autoState:${currentRomId}` and `pokeTrail:${currentRomId}` and clear any matching `localStorage['retro-idle:unload']` entry so reloading does not revert to pre-reset/pre-import state. `pokeTrail:${currentRomId}` is only imported back in `loadRom` when `autoState` restores; **Save State** persists `manualPokeTrail:${currentRomId}` alongside `manualState:${currentRomId}` (deleting it when saving without an active trail) and **Load State** restores it (or clears the active in-memory trail when none was saved).
 
 ---
 

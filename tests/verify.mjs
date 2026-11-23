@@ -1343,6 +1343,242 @@ async function main() {
     assert.equal(yellowCheck.snapshot.party[0].moves[0], 84);
     assert.equal(yellowCheck.snapshot.party[0].pp[0], 30);
 
+    // Manual Save State / Load State must also persist & restore the Heal Center trail
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const writes = [
+          [0xd35d, 0x01],
+          [0xd366, 0x00],
+          [0xd367, 20],
+          [0xd368, 20],
+          [0xd361, 23],
+          [0xd360, 26],
+        ];
+        for (const [addr, val] of writes) emu.module._emulator_write_mem(emu.e, addr, val);
+      })()
+    `);
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().trailLength === 1`),
+      5000,
+      25
+    );
+    await client.eval(
+      `window.__retroIdle.getEmulator().module._emulator_write_mem(window.__retroIdle.getEmulator().e, 0xd360, 27)`
+    );
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().trailLength === 2`),
+      5000,
+      25
+    );
+    await client.eval(
+      `window.__retroIdle.getEmulator().module._emulator_write_mem(window.__retroIdle.getEmulator().e, 0xd360, 28)`
+    );
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().trailLength === 3`),
+      5000,
+      25
+    );
+
+    const yellowTrailBeforeSave = await client.eval(`({
+      af: window.__retroIdle.getAutoFight(),
+      trail: window.__retroIdle.getAutoFight().exportTrail(),
+      healText: document.getElementById('heal-center-status').textContent,
+      healLinked: document.getElementById('heal-center-status').classList.contains('linked'),
+    })`);
+    assert.equal(yellowTrailBeforeSave.af.pokeCenterName, 'Viridian Heal Center');
+    assert.equal(yellowTrailBeforeSave.af.trailLength, 3);
+    assert.equal(yellowTrailBeforeSave.af.hasHealPath, true);
+    assert.equal(yellowTrailBeforeSave.healText, 'Heal Center path active: Viridian Heal Center (3 steps)');
+    assert.equal(yellowTrailBeforeSave.healLinked, true);
+
+    await client.eval(`document.getElementById('save-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('save-state-btn').disabled && document.getElementById('status').textContent.includes('state saved')`
+        ),
+      5000,
+      25
+    );
+
+    // Break the trail by jumping >2 tiles away, then Load State and confirm trail restores
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._emulator_write_mem(emu.e, 0xd361, 5);
+        emu.module._emulator_write_mem(emu.e, 0xd360, 5);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().trailLength === 0 && window.__retroIdle.getAutoFight().pokeCenterName === null`
+        ),
+      5000,
+      25
+    );
+
+    await client.eval(`document.getElementById('load-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('load-state-btn').disabled && document.getElementById('status').textContent.includes('state loaded') && window.__retroIdle.getAutoFight().hasHealPath === true && window.__retroIdle.getAutoFight().trailLength === 3`
+        ),
+      5000,
+      25
+    );
+    const yellowTrailAfterLoad = await client.eval(`({
+      x: window.__retroIdle.getEmulator().readWramLinear(0xd361),
+      y: window.__retroIdle.getEmulator().readWramLinear(0xd360),
+      trail: window.__retroIdle.getAutoFight().exportTrail(),
+      healText: document.getElementById('heal-center-status').textContent,
+      healLinked: document.getElementById('heal-center-status').classList.contains('linked'),
+    })`);
+    assert.equal(yellowTrailAfterLoad.x, 23);
+    assert.equal(yellowTrailAfterLoad.y, 28);
+    assert.deepEqual(yellowTrailAfterLoad.trail, yellowTrailBeforeSave.trail);
+    assert.equal(yellowTrailAfterLoad.healText, 'Heal Center path active: Viridian Heal Center (3 steps)');
+    assert.equal(yellowTrailAfterLoad.healLinked, true);
+
+    // Break trail in auto-save, reload page, then Load State and confirm manual heal path persists across refresh
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._emulator_write_mem(emu.e, 0xd361, 5);
+        emu.module._emulator_write_mem(emu.e, 0xd360, 5);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().trailLength === 0 && window.__retroIdle.getAutoFight().pokeCenterName === null`
+        ),
+      5000,
+      25
+    );
+
+    await client.eval(`window.__beforeReload = true`);
+    await client.send('Page.reload');
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__beforeReload === undefined && Boolean(window.__retroIdle?.getEmulator()?.isPlaying && document.getElementById('status')?.textContent.includes('resumed auto-save') && window.__retroIdle?.getAutoFight()?.profile === 'pokemon-yellow')`
+        ),
+      12000,
+      40
+    );
+    const yellowPostReloadBeforeLoad = await client.eval(`({
+      trailLength: window.__retroIdle.getAutoFight().trailLength,
+      loadDisabled: document.getElementById('load-state-btn').disabled,
+    })`);
+    assert.equal(yellowPostReloadBeforeLoad.trailLength, 0);
+    assert.equal(yellowPostReloadBeforeLoad.loadDisabled, false);
+
+    await client.eval(`document.getElementById('load-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('load-state-btn').disabled && document.getElementById('status').textContent.includes('state loaded') && window.__retroIdle.getAutoFight().hasHealPath === true && window.__retroIdle.getAutoFight().trailLength === 3`
+        ),
+      5000,
+      25
+    );
+    const yellowTrailAfterReloadLoad = await client.eval(`({
+      x: window.__retroIdle.getEmulator().readWramLinear(0xd361),
+      y: window.__retroIdle.getEmulator().readWramLinear(0xd360),
+      trail: window.__retroIdle.getAutoFight().exportTrail(),
+    })`);
+    assert.equal(yellowTrailAfterReloadLoad.x, 23);
+    assert.equal(yellowTrailAfterReloadLoad.y, 28);
+    assert.deepEqual(yellowTrailAfterReloadLoad.trail, yellowTrailBeforeSave.trail);
+
+    // Overwrite manual save with NO heal path, create a new active trail, then Load State -> trail must clear
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._emulator_write_mem(emu.e, 0xd361, 5);
+        emu.module._emulator_write_mem(emu.e, 0xd360, 5);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().trailLength === 0 && window.__retroIdle.getAutoFight().pokeCenterName === null`
+        ),
+      5000,
+      25
+    );
+    await client.eval(`document.getElementById('save-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('save-state-btn').disabled && document.getElementById('status').textContent.includes('state saved')`
+        ),
+      5000,
+      25
+    );
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const writes = [
+          [0xd35d, 0x29],
+          [0xd366, 6],
+          [0xd367, 4],
+          [0xd368, 7],
+          [0xd361, 3],
+          [0xd360, 7],
+        ];
+        for (const [addr, val] of writes) emu.module._emulator_write_mem(emu.e, addr, val);
+      })()
+    `);
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().inPokeCenter === true`),
+      5000,
+      25
+    );
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const writes = [
+          [0xd35d, 0x01],
+          [0xd366, 0x00],
+          [0xd367, 20],
+          [0xd368, 20],
+          [0xd361, 23],
+          [0xd360, 26],
+        ];
+        for (const [addr, val] of writes) emu.module._emulator_write_mem(emu.e, addr, val);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().trailLength === 1 && window.__retroIdle.getAutoFight().hasHealPath === true`
+        ),
+      5000,
+      25
+    );
+    await client.eval(`document.getElementById('load-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('load-state-btn').disabled && document.getElementById('status').textContent.includes('state loaded') && window.__retroIdle.getAutoFight().trailLength === 0 && window.__retroIdle.getAutoFight().pokeCenterName === null`
+        ),
+      5000,
+      25
+    );
+    const yellowTrailAfterEmptyLoad = await client.eval(`({
+      x: window.__retroIdle.getEmulator().readWramLinear(0xd361),
+      y: window.__retroIdle.getEmulator().readWramLinear(0xd360),
+      hasHealPath: window.__retroIdle.getAutoFight().hasHealPath,
+      healLinked: document.getElementById('heal-center-status').classList.contains('linked'),
+    })`);
+    assert.equal(yellowTrailAfterEmptyLoad.x, 5);
+    assert.equal(yellowTrailAfterEmptyLoad.y, 5);
+    assert.equal(yellowTrailAfterEmptyLoad.hasHealPath, false);
+    assert.equal(yellowTrailAfterEmptyLoad.healLinked, false);
+
     // Synthetic Pokémon Crystal CGB/MBC3+TIMER boot + GBC WRAM bank isolation + trainer battle stop
     const docCrystal = await client.send('DOM.getDocument');
     const crystalInputNode = await client.send('DOM.querySelector', {
