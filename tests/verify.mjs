@@ -621,6 +621,7 @@ async function main() {
       8000,
       40
     );
+    await waitFor(async () => await client.eval(HAS_NON_BLANK_CANVAS_EXPR), 5000, 30);
     const speedAfterReset = await client.eval(`({
       speed: window.__retroIdle.getSpeed(),
       emuSpeed: window.__retroIdle.getEmulator().speed,

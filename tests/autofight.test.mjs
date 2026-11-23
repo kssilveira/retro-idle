@@ -9,17 +9,11 @@ import {
   createAutoFight,
   encodeCrystalMapId,
   getAutoFightProfile,
-  isPokemonCrystalTitle,
-  isPokemonRedBlueTitle,
-  isPokemonYellowTitle,
-  isSupportedAutoFightTitle,
   pickAttackSlot,
   readPokemonCrystalOverworldPos,
   readPokemonCrystalSnapshot,
-  readPokemonRedOverworldPos,
-  readPokemonRedSnapshot,
-  readPokemonYellowOverworldPos,
-  readPokemonYellowSnapshot,
+  readPokemonGen1OverworldPos,
+  readPokemonGen1Snapshot,
 } from '../autofight.js';
 
 function makeSnapshot(overrides = {}) {
@@ -46,7 +40,6 @@ function makeSnapshot(overrides = {}) {
       moves: [10, 45, 52, 0],
       pp: [35, 40, 25, 0],
     },
-    enemyHp: 12,
     hasTypeBox: false,
     menuBoxRows: Array(6).fill('                    '),
     menuBoxText: '',
@@ -58,15 +51,40 @@ function makeSnapshot(overrides = {}) {
   };
 }
 
-test('isPokemonRedBlueTitle recognizes Red/Blue and ignores other ROMs', () => {
-  assert.equal(isPokemonRedBlueTitle('POKEMON RED'), true);
-  assert.equal(isPokemonRedBlueTitle('POKEMON BLUE'), true);
-  assert.equal(isPokemonRedBlueTitle(' pokemon red '), true);
-  assert.equal(isPokemonRedBlueTitle('MBC3 TEST'), false);
-  assert.equal(isPokemonRedBlueTitle(''), false);
+test('getAutoFightProfile recognizes Red, Blue, Yellow, Crystal and rejects unsupported ROMs', () => {
+  const red = getAutoFightProfile('POKEMON RED');
+  assert.ok(red);
+  assert.equal(red.id, 'pokemon-red-blue');
+  assert.equal(red.name, 'Pokémon Red');
+  assert.equal(red.mem, POKEMON_RED_BLUE_MEM);
+
+  const blue = getAutoFightProfile(' pokemon blue ');
+  assert.ok(blue);
+  assert.equal(blue.id, 'pokemon-red-blue');
+  assert.equal(blue.name, 'Pokémon Blue');
+
+  const yellow = getAutoFightProfile(' pokemon yellow ');
+  assert.ok(yellow);
+  assert.equal(yellow.id, 'pokemon-yellow');
+  assert.equal(yellow.name, 'Pokémon Yellow');
+  assert.equal(yellow.mem, POKEMON_YELLOW_MEM);
+
+  for (const title of ['PM_CRYSTAL', ' pm_crystal ', 'POKEMON CRYSTAL']) {
+    const crystal = getAutoFightProfile(title);
+    assert.ok(crystal);
+    assert.equal(crystal.id, 'pokemon-crystal');
+    assert.equal(crystal.name, 'Pokémon Crystal');
+    assert.equal(crystal.mem, POKEMON_CRYSTAL_MEM);
+    assert.equal(crystal.pokeCenterConfigs, CRYSTAL_POKECENTER_CONFIGS);
+  }
+  assert.equal(Object.keys(CRYSTAL_POKECENTER_CONFIGS).length, 22);
+
+  assert.equal(getAutoFightProfile('MBC3 TEST'), null);
+  assert.equal(getAutoFightProfile('TETRIS'), null);
+  assert.equal(getAutoFightProfile(''), null);
 });
 
-test('pickAttackSlot skips status/self-KO moves and masks PP Ups', () => {
+test('pickAttackSlot skips status, conditional, and self-KO moves (Gen 1 & Gen 2) and masks PP Ups', () => {
   // Growl (45), Leer (43), Splash (150), Selfdestruct (120) are all non-attacks
   assert.equal(pickAttackSlot([45, 43, 150, 120], [40, 30, 40, 5]), -1);
 
@@ -75,6 +93,17 @@ test('pickAttackSlot skips status/self-KO moves and masks PP Ups', () => {
 
   // Scratch with 3 PP Ups and 1 PP remaining (0xC1) -> slot 0
   assert.equal(pickAttackSlot([10, 45, 52, 0], [0xc1, 40, 25, 0]), 0);
+
+  // Gen 2: False Swipe (206), Perish Song (195), Snore (173), Protect (182) -> all skipped
+  assert.equal(pickAttackSlot([206, 195, 173, 182], [40, 5, 15, 10]), -1);
+  // Charm (204), Baton Pass (226), Mirror Coat (243), Belly Drum (187) -> all skipped
+  assert.equal(pickAttackSlot([204, 226, 243, 187], [20, 40, 20, 10]), -1);
+  // Pain Split (220), Curse (174), Crunch (242) -> selects Crunch (slot 2)
+  assert.equal(pickAttackSlot([220, 174, 242, 0], [20, 10, 15, 0]), 2);
+  // Flame Wheel (172), Return (216), Hidden Power (237)
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 20, 15]), 2);
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 25, 0, 0]), 1);
+  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 0, 15]), 3);
 });
 
 test('overworld 2-tile tethered pacing and blocked fallback + map change stop', () => {
@@ -241,8 +270,6 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
   );
   assert.equal(res.active, false);
   assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
-  assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing Heal Center/i);
 
   // Mid-animation after using final 1 PP: battleMon.pp becomes 0 during attack animation,
   // should NOT stop until menu reopens or battle ends.
@@ -284,8 +311,6 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
   );
   assert.equal(res.active, false);
   assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
-  assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing Heal Center/i);
 
   // Move Selection Menu with 0 attack PP also stops
   const af3 = createAutoFight();
@@ -300,8 +325,158 @@ test('stops cleanly when out of PP in overworld and in battle menus, without pre
   );
   assert.equal(res.active, false);
   assert.equal(res.stopReason, 'out of PP (missing Heal Center path — visit a Heal Center first)');
-  assert.match(res.stopReason, /out of PP/i);
-  assert.match(res.stopReason, /missing Heal Center/i);
+});
+
+test('proactive low-HP healing: triggers round-trip heal at <= 30% HP (with full PP), ignores > 30% HP, and stops if missing Heal Center', () => {
+  // 1. Without Heal Center path: stops in overworld, battle main menu, and move selection menu (not mid-animation)
+  const lowHpParty = [
+    { species: 176, hp: 8, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }, // 8/27 = 29.6% <= 30%
+  ];
+  const aboveThresholdParty = [
+    { species: 176, hp: 9, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }, // 9/27 = 33.3% > 30%
+  ];
+
+  const afAbove = createAutoFight();
+  afAbove.start(makeSnapshot({ party: aboveThresholdParty }));
+  assert.equal(afAbove.step(makeSnapshot({ party: aboveThresholdParty })).phase, 'moving');
+
+  const afNoPathOw = createAutoFight();
+  afNoPathOw.start(makeSnapshot({ party: lowHpParty }));
+  let res = afNoPathOw.step(makeSnapshot({ party: lowHpParty }));
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'low HP (missing Heal Center path — visit a Heal Center first)');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+
+  const lowHpBattleMon = { hp: 8, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] };
+  const afNoPathBattle = createAutoFight();
+  afNoPathBattle.start(makeSnapshot({ isInBattle: 1 }));
+  // Mid-animation (no menus visible yet) keeps stepping without premature stop
+  assert.equal(
+    afNoPathBattle.step(makeSnapshot({ isInBattle: 1, battleMon: lowHpBattleMon })).active,
+    true
+  );
+  for (let i = 0; i < 10; i++) {
+    afNoPathBattle.step(makeSnapshot({ isInBattle: 1, battleMon: lowHpBattleMon }));
+  }
+  res = afNoPathBattle.step(
+    makeSnapshot({
+      isInBattle: 1,
+      fightPos: { row: 14, col: 10 },
+      hasRun: true,
+      cursorPos: { row: 14, col: 9 },
+      battleMon: lowHpBattleMon,
+    })
+  );
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'low HP (missing Heal Center path — visit a Heal Center first)');
+
+  const afNoPathMove = createAutoFight();
+  afNoPathMove.start(makeSnapshot({ isInBattle: 1 }));
+  res = afNoPathMove.step(
+    makeSnapshot({
+      isInBattle: 1,
+      hasTypeBox: true,
+      cursorPos: { row: 13, col: 5 },
+      battleMon: lowHpBattleMon,
+    })
+  );
+  assert.equal(res.active, false);
+  assert.equal(res.stopReason, 'low HP (missing Heal Center path — visit a Heal Center first)');
+
+  // 2. With Heal Center path: flees Move Selection Menu at <= 30% HP (even with full PP), heals HP at Heal Center, and returns
+  const af = createAutoFight();
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, partyCount: 1, facing: 0x00 });
+  af.start(makeSnapshot({ map: 12, x: 10, y: 0 }));
+
+  res = af.step(
+    makeSnapshot({
+      map: 12,
+      x: 10,
+      y: 0,
+      isInBattle: 1,
+      hasTypeBox: true,
+      cursorPos: { row: 13, col: 5 },
+      battleMon: lowHpBattleMon,
+    })
+  );
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'fleeing');
+  assert.equal(res.buttons.b, true);
+  for (let i = 0; i < 12; i++) {
+    af.step(
+      makeSnapshot({
+        map: 12,
+        x: 10,
+        y: 0,
+        isInBattle: 1,
+        hasTypeBox: true,
+        cursorPos: { row: 13, col: 5 },
+        battleMon: lowHpBattleMon,
+      })
+    );
+  }
+
+  // Battle Menu navigates FIGHT -> RUN
+  res = af.step(
+    makeSnapshot({
+      map: 12,
+      x: 10,
+      y: 0,
+      isInBattle: 1,
+      fightPos: { row: 14, col: 10 },
+      runPos: { row: 16, col: 16 },
+      hasRun: true,
+      cursorPos: { row: 14, col: 9 },
+      battleMon: lowHpBattleMon,
+    })
+  );
+  assert.equal(res.phase, 'fleeing');
+  assert.equal(res.buttons.down, true);
+
+  // Overworld returns along trail -> enters PokéCenter -> heals HP (while PP was already full!) -> walks back
+  res = af.step(makeSnapshot({ map: 12, x: 10, y: 0, party: lowHpParty }));
+  assert.equal(res.phase, 'returning');
+  assert.equal(res.buttons.up, true);
+
+  res = af.step(makeSnapshot({ map: 1, x: 23, y: 25, party: lowHpParty }));
+  assert.equal(res.phase, 'returning');
+  assert.equal(res.buttons.up, true);
+
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 7, facing: 0x04, party: lowHpParty }));
+  assert.equal(res.phase, 'healing');
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: lowHpParty }));
+  assert.equal(af.getState().healSubphase, 'talking_nurse');
+  for (let i = 0; i < 12; i++) {
+    af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: lowHpParty }));
+  }
+
+  // Healed HP triggers closing_dialogue even though PP did not change
+  const healedParty = [
+    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
+  ];
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
+  assert.equal(af.getState().healSubphase, 'closing_dialogue');
+  assert.equal(res.buttons.b, true);
+  for (let i = 0; i < 8; i++) {
+    assert.equal(
+      af.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty })).buttons.a,
+      false
+    );
+  }
+
+  res = af.step(makeSnapshot({ map: 0x29, x: 3, y: 4, facing: 0x00, party: healedParty }));
+  assert.equal(af.getState().healSubphase, 'exiting');
+  res = af.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
+  assert.equal(res.phase, 'walking_back');
+  res = af.step(makeSnapshot({ map: 12, x: 10, y: 0, party: healedParty }));
+  assert.equal(res.phase, 'moving');
+
+  // 3. Overworld low HP on arrival/start also triggers returning immediately when Heal Center path exists
+  res = af.step(makeSnapshot({ map: 12, x: 10, y: 0, party: lowHpParty }));
+  assert.equal(res.active, true);
+  assert.equal(res.phase, 'returning');
 });
 
 test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer battle', () => {
@@ -326,7 +501,7 @@ test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer b
   );
   assert.equal(res.active, true);
 
-  // Battle HP reaches 0 without Heal Center path -> stops immediately with actionable message
+  // Battle HP reaches 0 -> stops with 'fainted'
   res = af.step(
     makeSnapshot({
       isInBattle: 1,
@@ -334,19 +509,20 @@ test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer b
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'fainted (missing Heal Center path — visit a Heal Center first)');
-  assert.match(res.stopReason, /fainted/i);
-  assert.match(res.stopReason, /missing Heal Center/i);
+  assert.equal(res.stopReason, 'fainted');
   assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
 
-  // isInBattle === 0xFF blackout without Heal Center path
-  const afBlackout = createAutoFight();
-  afBlackout.start(makeSnapshot());
-  res = afBlackout.step(makeSnapshot({ isInBattle: 0xff }));
+  // Even with a Heal Center path, fainting / blackout stops cleanly with 'fainted'
+  const afWithPath = createAutoFight();
+  afWithPath.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  afWithPath.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  afWithPath.start(makeSnapshot({ map: 1, x: 23, y: 25 }));
+  res = afWithPath.step(makeSnapshot({ map: 1, x: 23, y: 25, isInBattle: 0xff }));
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'fainted (missing Heal Center path — visit a Heal Center first)');
+  assert.equal(res.stopReason, 'fainted');
+  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
 
-  // Overworld all party HP 0 without Heal Center path
+  // Overworld all party HP 0 -> stops with 'fainted'
   const afDeadParty = createAutoFight();
   afDeadParty.start(makeSnapshot());
   res = afDeadParty.step(
@@ -355,7 +531,7 @@ test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer b
     })
   );
   assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'fainted (missing Heal Center path — visit a Heal Center first)');
+  assert.equal(res.stopReason, 'fainted');
 
   // Empty party stops cleanly with 'fainted'
   const afEmptyParty = createAutoFight();
@@ -372,7 +548,7 @@ test('stops when fainted/dead, ignores stale battleMon intro, stops on trainer b
   assert.equal(res.stopReason, 'trainer battle');
 });
 
-test('stops immediately with neutral buttons when learning a move (text or move list diff)', () => {
+test('stops immediately with neutral buttons when learning a move', () => {
   for (const text of [
     'CHARMANDER is trying to learn RAGE!',
     'CHARMANDER learned EMBER!',
@@ -386,44 +562,22 @@ test('stops immediately with neutral buttons when learning a move (text or move 
     assert.equal(res.stopReason, 'learning a move');
     assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
   }
-
-  // Party move list gained a 4th move without text match
-  const afDiff = createAutoFight();
-  afDiff.start(makeSnapshot({ isInBattle: 1 }));
-  const res = afDiff.step(
-    makeSnapshot({
-      isInBattle: 1,
-      party: [
-        {
-          species: 176,
-          hp: 27,
-          maxHp: 27,
-          level: 10,
-          moves: [10, 45, 52, 99],
-          pp: [35, 40, 25, 20],
-        },
-      ],
-    })
-  );
-  assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'learning a move');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
 });
 
-test('passive PokéCenter trail tracking: ignores title screen, records exit, prunes loops, resets on new PokéCenter, flags moving ledges only', () => {
+test('passive PokéCenter trail tracking: ignores title screen, records exit, prunes loops, and resets on new PokéCenter', () => {
   const af = createAutoFight();
 
   // Title screen / empty party should not record PokéCenter
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 0, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 0, facing: 0x00 });
   assert.equal(af.getState().pokeCenterMap, null);
   assert.equal(af.getState().trailLength, 0);
 
   // Inside Viridian PokéCenter (0x29) with a party
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
   assert.equal(af.getState().pokeCenterMap, 0x29);
 
   // Exit onto Viridian City (map 1)
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
   assert.equal(af.getState().trailLength, 1);
   assert.equal(af.getState().hasHealPath, true);
 
@@ -435,7 +589,7 @@ test('passive PokéCenter trail tracking: ignores title screen, records exit, pr
     [24, 26],
     [23, 26],
   ]) {
-    af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00 });
   }
   const pruned = af.exportTrail();
   assert.equal(pruned.trail.length, 2);
@@ -447,17 +601,9 @@ test('passive PokéCenter trail tracking: ignores title screen, records exit, pr
     ]
   );
 
-  // Stationary BIT_LEDGE_OR_FISHING (fishing) must NOT flag oneWay
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0x40 });
-  assert.equal(af.exportTrail().trail[1].oneWay, false);
-
-  // Jumping down a ledge (dist 2 + movementFlags 0x40) flags oneWay
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 28, partyCount: 1, facing: 0x00, movementFlags: 0x40 });
-  assert.equal(af.exportTrail().trail[2].oneWay, true);
-
   // Cross-map transition records enterDir / exitDir
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 29, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 27, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, partyCount: 1, facing: 0x00 });
   const cross = af.exportTrail();
   const crossNode = cross.trail[cross.trail.length - 1];
   assert.equal(crossNode.map, 12);
@@ -465,7 +611,7 @@ test('passive PokéCenter trail tracking: ignores title screen, records exit, pr
   assert.equal(crossNode.exitDir, 'up');
 
   // Entering a different PokéCenter (Pewter 0x3a) resets trail
-  af.observe({ isInBattle: 0, map: 0x3a, x: 3, y: 7, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x3a, x: 3, y: 7, partyCount: 1, facing: 0x04 });
   assert.equal(af.getState().pokeCenterMap, 0x3a);
   assert.equal(af.getState().trailLength, 0);
   assert.equal(af.exportTrail(), null);
@@ -475,20 +621,20 @@ test('round-trip heal & return: flees out-of-PP battle, handles ambush, heals wi
   const af = createAutoFight();
 
   // Observe outbound walk from Viridian PokéCenter (0x29) -> Viridian City (1) -> Route 1 (12)
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
   for (const [x, y] of [
     [23, 25],
     [23, 26],
     [23, 27],
   ]) {
-    af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00 });
   }
   for (const [x, y] of [
     [10, 0],
     [10, 1],
     [10, 2],
   ]) {
-    af.observe({ isInBattle: 0, map: 12, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    af.observe({ isInBattle: 0, map: 12, x, y, partyCount: 1, facing: 0x00 });
   }
   assert.equal(af.getState().hasHealPath, true);
 
@@ -696,51 +842,13 @@ test('round-trip heal & return: flees out-of-PP battle, handles ambush, heals wi
   assert.equal(res.phase, 'returning');
 });
 
-test('stops quickly with actionable error when blocked by a one-way ledge', () => {
+test('stops after generic blocked timeout when stuck (returning and walking back), and clears stuck counter if movement resumes', () => {
   const af = createAutoFight();
 
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  // One-way ledge jump down to (23, 28)
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 28, partyCount: 1, facing: 0x00, movementFlags: 0x40 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 29, partyCount: 1, facing: 0x00, movementFlags: 0 });
-
-  const zeroPpParty = [
-    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 0, 0], pp: [0, 40, 0, 0] },
-  ];
-  af.start(makeSnapshot({ map: 1, x: 23, y: 29, party: zeroPpParty }));
-
-  // First step initiates return up from (23, 29) -> moves to (23, 28)
-  let res = af.step(makeSnapshot({ map: 1, x: 23, y: 29, party: zeroPpParty }));
-  assert.equal(res.phase, 'returning');
-  assert.equal(res.buttons.up, true);
-
-  // Arrival frame at (23, 28)
-  res = af.step(makeSnapshot({ map: 1, x: 23, y: 28, party: zeroPpParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.buttons.up, true);
-
-  // Blocked at (23, 28) trying to climb back up the ledge: runs for 44 stuck frames, stops on 45th
-  for (let i = 0; i < 44; i++) {
-    res = af.step(makeSnapshot({ map: 1, x: 23, y: 28, party: zeroPpParty }));
-    assert.equal(res.active, true);
-    assert.equal(res.buttons.up, true);
-  }
-  res = af.step(makeSnapshot({ map: 1, x: 23, y: 28, party: zeroPpParty }));
-  assert.equal(res.active, false);
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-  assert.match(res.stopReason, /one-way/i);
-  assert.match(res.stopReason, /different path/i);
-});
-
-test('stops after generic blocked timeout when stuck, and clears stuck counter if movement resumes', () => {
-  const af = createAutoFight();
-
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 27, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 27, partyCount: 1, facing: 0x00 });
 
   const zeroPpParty = [
     { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 0, 0], pp: [0, 40, 0, 0] },
@@ -768,13 +876,42 @@ test('stops after generic blocked timeout when stuck, and clears stuck counter i
   assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
   assert.match(res.stopReason, /blocked/i);
   assert.match(res.stopReason, /different path/i);
+
+  // Also stops after 240 blocked frames when walking_back to grind spot
+  const afWalkBack = createAutoFight();
+  afWalkBack.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  afWalkBack.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  afWalkBack.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00 });
+  afWalkBack.start(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
+  for (let i = 0; i < 12; i++) {
+    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
+  }
+  const healedParty = [
+    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 0, 0], pp: [35, 40, 0, 0] },
+  ];
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
+  for (let i = 0; i < 8; i++) {
+    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
+  }
+  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 4, facing: 0x00, party: healedParty }));
+  afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
+  for (let i = 0; i < 268; i++) {
+    res = afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
+    assert.equal(res.active, true);
+    assert.equal(res.phase, 'walking_back');
+  }
+  res = afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
+  assert.equal(res.active, false);
+  assert.match(res.stopReason, /returning to grind spot/i);
 });
 
 test('exportTrail / importTrail round-trip preserves heal route and rejects invalid payloads', () => {
   const af1 = createAutoFight();
-  af1.observe({ isInBattle: 0, map: 0x3a, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af1.observe({ isInBattle: 0, map: 3, x: 13, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af1.observe({ isInBattle: 0, map: 3, x: 13, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af1.observe({ isInBattle: 0, map: 0x3a, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  af1.observe({ isInBattle: 0, map: 3, x: 13, y: 25, partyCount: 1, facing: 0x00 });
+  af1.observe({ isInBattle: 0, map: 3, x: 13, y: 26, partyCount: 1, facing: 0x00 });
   const exported = af1.exportTrail();
   assert.ok(exported);
 
@@ -807,7 +944,6 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
     mapHeight: 8,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
   assert.equal(af1.getState().inPokeCenter, true);
   assert.equal(af1.getState().pokeCenterName, 'Viridian Heal Center');
@@ -824,7 +960,6 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
       mapHeight: 8,
       partyCount: 1,
       facing: 0x00,
-      movementFlags: 0,
     });
   }
 
@@ -839,7 +974,6 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
     mapHeight: 36,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
   af1.observe({
     isInBattle: 0,
@@ -851,7 +985,6 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
     mapHeight: 36,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
 
   const t1 = af1.exportTrail();
@@ -869,21 +1002,21 @@ test('warp fade-out resilience: preserves trail when wCurMap updates before wXCo
 
   // 2. Warp fade-out WITHOUT tileset / same-tileset gate warp (stale coords for 24 frames, then jump)
   const af2 = createAutoFight();
-  af2.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af2.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
   for (let i = 0; i < 24; i++) {
-    af2.observe({ isInBattle: 0, map: 1, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    af2.observe({ isInBattle: 0, map: 1, x: 3, y: 7, partyCount: 1, facing: 0x00 });
   }
   // Frame 25 snaps to real outside coords (23, 25) and continues walking
-  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00 });
   // Turn north at (23, 26) before entering gate map (0x2f)
-  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af2.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04 });
   // Walk into a gate map (0x2f): wCurMap changes first for 24 frames at old coords (23, 26)
   for (let i = 0; i < 24; i++) {
-    af2.observe({ isInBattle: 0, map: 0x2f, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
+    af2.observe({ isInBattle: 0, map: 0x2f, x: 23, y: 26, partyCount: 1, facing: 0x04 });
   }
   // Destination inside gate snaps to (4, 7) -> preserves enterDir/exitDir from (23, 26)
-  af2.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 7, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af2.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 7, partyCount: 1, facing: 0x04 });
   const t2 = af2.exportTrail();
   assert.ok(t2, 'Trail must survive warp fade-outs without tileset');
   assert.deepEqual(
@@ -911,7 +1044,6 @@ test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing 
     mapHeight: 8,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
   af.observe({
     isInBattle: 0,
@@ -923,7 +1055,6 @@ test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing 
     mapHeight: 36,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
   af.observe({
     isInBattle: 0,
@@ -935,7 +1066,6 @@ test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing 
     mapHeight: 36,
     partyCount: 1,
     facing: 0x00,
-    movementFlags: 0,
   });
 
   // Transient OOB values during CheckMapConnections must be ignored without wiping trail
@@ -988,186 +1118,11 @@ test('border transient 0xFF/OOB coords are ignored by observe() and stepHealing 
   assert.equal(res.buttons.down, true);
 });
 
-test('stopping during returning, walking_back, and ambush fleeing preserves heal path across observe() and restart', () => {
-  const zeroPpParty = [
-    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
-  ];
-  const healedParty = [
-    { species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
-  ];
-
-  function setupRoute1Trail() {
-    const af = createAutoFight();
-    af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-    for (const [x, y] of [
-      [23, 25],
-      [23, 26],
-      [23, 27],
-    ]) {
-      af.observe({ isInBattle: 0, map: 1, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
-    }
-    for (const [x, y] of [
-      [10, 0],
-      [10, 1],
-      [10, 2],
-      [10, 3],
-      [10, 4],
-      [10, 5],
-    ]) {
-      af.observe({ isInBattle: 0, map: 12, x, y, partyCount: 1, facing: 0x00, movementFlags: 0 });
-    }
-    return af;
-  }
-
-  // 1. Stop during returning on the same map > 2 tiles from grind spot (10, 5)
-  const afRetSameMap = setupRoute1Trail();
-  afRetSameMap.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
-  for (const y of [5, 4, 3, 2]) {
-    const res = afRetSameMap.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
-    assert.equal(res.phase, 'returning');
-  }
-  afRetSameMap.stop('manual');
-  assert.equal(afRetSameMap.getState().hasHealPath, true);
-  assert.equal(afRetSameMap.getState().pokeCenterMap, 0x29);
-  assert.equal(afRetSameMap.getState().trailLength, 6);
-
-  // Subsequent observe() frames on Route 1 must keep and continue pruning the trail
-  afRetSameMap.observe({ isInBattle: 0, map: 12, x: 10, y: 2, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  afRetSameMap.observe({ isInBattle: 0, map: 12, x: 10, y: 1, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  assert.equal(afRetSameMap.getState().hasHealPath, true);
-  assert.equal(afRetSameMap.getState().trailLength, 5);
-
-  afRetSameMap.start(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
-  const restartedSameMap = afRetSameMap.step(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
-  assert.equal(restartedSameMap.active, true);
-  assert.equal(restartedSameMap.phase, 'returning');
-
-  // 2. Stop during returning on an earlier map (Viridian City map 1)
-  const afRetEarlierMap = setupRoute1Trail();
-  afRetEarlierMap.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
-  for (const y of [5, 4, 3, 2, 1, 0]) {
-    afRetEarlierMap.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
-  }
-  afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 27, party: zeroPpParty }));
-  afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
-  afRetEarlierMap.stop('manual');
-  assert.equal(afRetEarlierMap.getState().hasHealPath, true);
-  assert.equal(afRetEarlierMap.getState().trailLength, 2);
-
-  afRetEarlierMap.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  assert.equal(afRetEarlierMap.getState().hasHealPath, true);
-  assert.equal(afRetEarlierMap.getState().trailLength, 2);
-
-  afRetEarlierMap.start(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
-  const restartedEarlierMap = afRetEarlierMap.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
-  assert.equal(restartedEarlierMap.active, true);
-  assert.equal(restartedEarlierMap.phase, 'returning');
-
-  // 3. Stop during ambush fleeing (both >2 tiles from grind spot and on an earlier map)
-  const afFlee = setupRoute1Trail();
-  afFlee.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
-  for (const y of [5, 4, 3, 2]) {
-    afFlee.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
-  }
-  const fleeStep = afFlee.step(
-    makeSnapshot({
-      map: 12,
-      x: 10,
-      y: 2,
-      isInBattle: 1,
-      fightPos: { row: 14, col: 10 },
-      runPos: { row: 16, col: 16 },
-      hasRun: true,
-      cursorPos: { row: 14, col: 9 },
-      party: zeroPpParty,
-    })
-  );
-  assert.equal(fleeStep.phase, 'fleeing');
-  afFlee.stop('manual');
-  assert.equal(afFlee.getState().hasHealPath, true);
-  assert.equal(afFlee.getState().trailLength, 6);
-
-  // Restarting while still in ambush battle on an earlier map reconciles trail cleanly
-  const afFleeEarlier = setupRoute1Trail();
-  afFleeEarlier.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
-  for (const y of [5, 4, 3, 2, 1, 0]) {
-    afFleeEarlier.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
-  }
-  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 27, party: zeroPpParty }));
-  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 26, party: zeroPpParty }));
-  afFleeEarlier.step(makeSnapshot({ map: 1, x: 23, y: 26, isInBattle: 1, party: zeroPpParty }));
-  afFleeEarlier.stop('manual');
-  assert.equal(afFleeEarlier.getState().hasHealPath, true);
-  assert.equal(afFleeEarlier.getState().trailLength, 2);
-
-  afFleeEarlier.start(
-    makeSnapshot({
-      map: 1,
-      x: 23,
-      y: 26,
-      isInBattle: 1,
-      fightPos: { row: 14, col: 10 },
-      runPos: { row: 16, col: 16 },
-      hasRun: true,
-      cursorPos: { row: 14, col: 9 },
-      party: zeroPpParty,
-      battleMon: { hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
-    })
-  );
-  const restartAmbush = afFleeEarlier.step(
-    makeSnapshot({
-      map: 1,
-      x: 23,
-      y: 26,
-      isInBattle: 1,
-      fightPos: { row: 14, col: 10 },
-      runPos: { row: 16, col: 16 },
-      hasRun: true,
-      cursorPos: { row: 14, col: 9 },
-      party: zeroPpParty,
-      battleMon: { hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
-    })
-  );
-  assert.equal(restartAmbush.active, true);
-  assert.equal(restartAmbush.phase, 'fleeing');
-
-  // 4. Stop during walking_back on earlier map preserves trail
-  const afWalkBack = setupRoute1Trail();
-  afWalkBack.start(makeSnapshot({ map: 12, x: 10, y: 5, party: zeroPpParty }));
-  for (const y of [5, 4, 3, 2, 1, 0]) {
-    afWalkBack.step(makeSnapshot({ map: 12, x: 10, y, party: zeroPpParty }));
-  }
-  for (const y of [27, 26, 25]) {
-    afWalkBack.step(makeSnapshot({ map: 1, x: 23, y, party: zeroPpParty }));
-  }
-  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 7, facing: 0x04, party: zeroPpParty }));
-  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
-  for (let i = 0; i < 12; i++) {
-    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: zeroPpParty }));
-  }
-  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
-  for (let i = 0; i < 8; i++) {
-    afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 3, facing: 0x04, party: healedParty }));
-  }
-  afWalkBack.step(makeSnapshot({ map: 0x29, x: 3, y: 4, facing: 0x00, party: healedParty }));
-  afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 25, party: healedParty }));
-  const wbRes = afWalkBack.step(makeSnapshot({ map: 1, x: 23, y: 26, party: healedParty }));
-  assert.equal(wbRes.phase, 'walking_back');
-
-  afWalkBack.stop('manual');
-  assert.equal(afWalkBack.getState().hasHealPath, true);
-  assert.equal(afWalkBack.getState().trailLength, 2);
-  afWalkBack.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  assert.equal(afWalkBack.getState().hasHealPath, true);
-  assert.equal(afWalkBack.getState().trailLength, 2);
-});
-
-test('stepMoving respects cooldown before re-anchoring and records drift >= 3 tiles so stopping preserves trail', () => {
+test('stepMoving respects cooldown before re-anchoring after battle', () => {
   const af = createAutoFight();
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 12, x: 10, y: 5, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  const initialLen = af.getState().trailLength;
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 5, partyCount: 1, facing: 0x00 });
 
   af.start(makeSnapshot({ map: 12, x: 10, y: 5 }));
   af.step(makeSnapshot({ map: 12, x: 10, y: 5 }));
@@ -1190,24 +1145,6 @@ test('stepMoving respects cooldown before re-anchoring and records drift >= 3 ti
   assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 5 });
   af.step(makeSnapshot({ map: 12, x: 11, y: 5 }));
   assert.deepEqual(af.getState().anchor, { map: 12, x: 11, y: 5 });
-
-  // Drift two more tiles right to (13, 5) (3 tiles total from (10, 5))
-  af.step(makeSnapshot({ map: 12, x: 12, y: 5 }));
-  for (let i = 0; i < 150; i++) {
-    af.step(makeSnapshot({ map: 12, x: 12, y: 5 }));
-  }
-  assert.deepEqual(af.getState().anchor, { map: 12, x: 12, y: 5 });
-
-  af.step(makeSnapshot({ map: 12, x: 13, y: 5 }));
-  for (let i = 0; i < 150; i++) {
-    af.step(makeSnapshot({ map: 12, x: 13, y: 5 }));
-  }
-  assert.deepEqual(af.getState().anchor, { map: 12, x: 13, y: 5 });
-
-  af.stop('manual');
-  af.observe({ isInBattle: 0, map: 12, x: 13, y: 5, partyCount: 1, facing: 0x0c, movementFlags: 0 });
-  assert.equal(af.getState().hasHealPath, true);
-  assert.equal(af.getState().trailLength, initialLen + 3);
 });
 
 test('stopping during healing or exiting warp fade-out keeps inPokeCenter true and records fresh trail on exit', () => {
@@ -1219,9 +1156,9 @@ test('stopping during healing or exiting warp fade-out keeps inPokeCenter true a
   ];
 
   const af = createAutoFight();
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00 });
 
   af.start(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
   af.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, party: zeroPpParty }));
@@ -1247,13 +1184,13 @@ test('stopping during healing or exiting warp fade-out keeps inPokeCenter true a
 
   // Remaining fade-out frames observed while stopped stay inPokeCenter with empty trail
   for (let i = 0; i < 10; i++) {
-    af.observe({ isInBattle: 0, map: 1, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
+    af.observe({ isInBattle: 0, map: 1, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00 });
     assert.equal(af.getState().inPokeCenter, true);
     assert.equal(af.getState().trailLength, 0);
   }
 
   // Outside tileset loads at (1, 23, 25) -> fresh trail starts cleanly
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00 });
   assert.equal(af.getState().inPokeCenter, false);
   assert.equal(af.getState().hasHealPath, true);
   assert.equal(af.getState().trailLength, 1);
@@ -1263,58 +1200,16 @@ test('stopping during healing or exiting warp fade-out keeps inPokeCenter true a
   assert.equal(exported.trail[0].exitDir, 'up');
 });
 
-test('stopping during returning gate warp fade-out waits out grace window and snaps back onto trail', () => {
-  const zeroPpParty = [
-    { species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] },
-  ];
-
-  const af = createAutoFight();
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 7, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 0x2f, x: 4, y: 6, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, partyCount: 1, facing: 0x04, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 12, x: 10, y: 1, partyCount: 1, facing: 0x04, movementFlags: 0 });
-
-  af.start(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
-  af.step(makeSnapshot({ map: 12, x: 10, y: 1, party: zeroPpParty }));
-  af.step(makeSnapshot({ map: 12, x: 10, y: 0, party: zeroPpParty }));
-  af.step(makeSnapshot({ map: 0x2f, x: 4, y: 6, party: zeroPpParty }));
-  af.step(makeSnapshot({ map: 0x2f, x: 4, y: 7, party: zeroPpParty }));
-
-  // Gate warp fade-out: map changed to 1 while coords are still gate (4, 7)
-  af.step(makeSnapshot({ map: 1, x: 4, y: 7, party: zeroPpParty }));
-  af.stop('manual');
-
-  for (let i = 0; i < 20; i++) {
-    af.observe({ isInBattle: 0, map: 1, x: 4, y: 7, partyCount: 1, facing: 0x00, movementFlags: 0 });
-    assert.equal(af.getState().pokeCenterMap, 0x29);
-    assert.ok(af.getState().trailLength > 0);
-  }
-
-  // Destination coords (1, 23, 26) load -> snaps cleanly onto trail
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  assert.equal(af.getState().hasHealPath, true);
-  assert.deepEqual(
-    af.exportTrail().trail.map((n) => [n.map, n.x, n.y]),
-    [
-      [1, 23, 25],
-      [1, 23, 26],
-    ]
-  );
-});
-
 test('redundant stop() while inactive preserves trail/inPokeCenter and hasHealPath tracks manual backtracking', () => {
   const af = createAutoFight();
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00 });
   af.stop('manual');
   assert.equal(af.getState().inPokeCenter, true);
   assert.equal(af.getState().pokeCenterMap, 0x29);
 
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00 });
+  af.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00 });
 
   af.start(makeSnapshot({ map: 12, x: 10, y: 0 }));
   af.stop('manual');
@@ -1324,7 +1219,7 @@ test('redundant stop() while inactive preserves trail/inPokeCenter and hasHealPa
   assert.equal(af.getState().trailLength, 3);
 
   // Manually walk back onto map 1 (while anchor was map 12) -> hasHealPath must reflect map 1
-  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x04, movementFlags: 0 });
+  af.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x04 });
   assert.equal(af.getState().trailLength, 2);
   assert.equal(af.getState().hasHealPath, true);
 });
@@ -1376,38 +1271,7 @@ function createGen1Memory() {
   return { ram, readMem, write16, writeTileText, clearTileMap, writePartyMon, writeBattleMon };
 }
 
-test('getAutoFightProfile and title helpers distinguish Red/Blue, Yellow, and unsupported ROMs', () => {
-  assert.equal(isPokemonYellowTitle('POKEMON YELLOW'), true);
-  assert.equal(isPokemonYellowTitle(' pokemon yellow '), true);
-  assert.equal(isPokemonYellowTitle('POKEMON RED'), false);
-  assert.equal(isPokemonRedBlueTitle('POKEMON YELLOW'), false);
-  assert.equal(isSupportedAutoFightTitle('POKEMON YELLOW'), true);
-  assert.equal(isSupportedAutoFightTitle('POKEMON RED'), true);
-  assert.equal(isSupportedAutoFightTitle('POKEMON BLUE'), true);
-  assert.equal(isSupportedAutoFightTitle('MBC3 TEST'), false);
-  assert.equal(isSupportedAutoFightTitle(''), false);
-
-  const yellow = getAutoFightProfile(' pokemon yellow ');
-  assert.ok(yellow);
-  assert.equal(yellow.id, 'pokemon-yellow');
-  assert.equal(yellow.name, 'Pokémon Yellow');
-  assert.equal(yellow.mem, POKEMON_YELLOW_MEM);
-
-  const red = getAutoFightProfile('POKEMON RED');
-  assert.ok(red);
-  assert.equal(red.id, 'pokemon-red-blue');
-  assert.equal(red.name, 'Pokémon Red');
-  assert.equal(red.mem, POKEMON_RED_BLUE_MEM);
-
-  const blue = getAutoFightProfile('POKEMON BLUE');
-  assert.ok(blue);
-  assert.equal(blue.id, 'pokemon-red-blue');
-  assert.equal(blue.name, 'Pokémon Blue');
-
-  assert.equal(getAutoFightProfile('TETRIS'), null);
-});
-
-test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM offsets and tilemap menus', () => {
+test('readPokemonGen1OverworldPos and readPokemonGen1Snapshot read Red/Blue and Yellow WRAM offsets and tilemap menus', () => {
   // 1. Pokémon Yellow memory buffer with distinct sentinels on Red/Blue shifted addresses
   const yMem = createGen1Memory();
   yMem.ram[0xd056] = 1; // wIsInBattle (Yellow)
@@ -1421,8 +1285,6 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
   yMem.ram[0xd367] = 18; // wCurMapHeight (Yellow) -> 36
   yMem.ram[0xd368] = 10; // wCurMapWidth (Yellow) -> 20
   yMem.ram[0xd369] = 99; // sentinel
-  yMem.ram[0xd735] = 0x40; // wd736 (Yellow)
-  yMem.ram[0xd736] = 0x00; // sentinel
   yMem.ram[0xc109] = 0x08; // shared facing left
   yMem.ram[0xd162] = 2; // wPartyCount (Yellow)
   yMem.ram[0xd163] = 6; // sentinel
@@ -1449,14 +1311,13 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
     moves: [84, 45, 0, 0],
     pp: [29, 40, 0, 0],
   });
-  yMem.write16(0xcfe5, 13); // wEnemyMonHP (Yellow)
 
   yMem.clearTileMap();
   yMem.writeTileText(14, 10, 'FIGHT');
   yMem.writeTileText(16, 16, 'RUN');
   yMem.ram[0xc3a0 + 14 * 20 + 9] = 0xed;
 
-  const yPos = readPokemonYellowOverworldPos(yMem.readMem);
+  const yPos = readPokemonGen1OverworldPos(yMem.readMem, POKEMON_YELLOW_MEM);
   assert.deepEqual(yPos, {
     isInBattle: 1,
     map: 12,
@@ -1467,10 +1328,9 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
     mapWidth: 20,
     partyCount: 2,
     facing: 0x08,
-    movementFlags: 0x40,
   });
 
-  const ySnapBattle = readPokemonYellowSnapshot(yMem.readMem);
+  const ySnapBattle = readPokemonGen1Snapshot(yMem.readMem, POKEMON_YELLOW_MEM);
   assert.equal(ySnapBattle.isInBattle, 1);
   assert.equal(ySnapBattle.map, 12);
   assert.equal(ySnapBattle.x, 11);
@@ -1478,7 +1338,6 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
   assert.equal(ySnapBattle.tileset, 3);
   assert.equal(ySnapBattle.mapHeight, 36);
   assert.equal(ySnapBattle.mapWidth, 20);
-  assert.equal(ySnapBattle.movementFlags, 0x40);
   assert.equal(ySnapBattle.partyCount, 2);
   assert.deepEqual(ySnapBattle.party[0], {
     species: 0x54,
@@ -1503,7 +1362,6 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
     moves: [84, 45, 0, 0],
     pp: [29, 40, 0, 0],
   });
-  assert.equal(ySnapBattle.enemyHp, 13);
   assert.equal(ySnapBattle.hasTypeBox, false);
   assert.deepEqual(ySnapBattle.fightPos, { row: 14, col: 10 });
   assert.deepEqual(ySnapBattle.runPos, { row: 16, col: 16 });
@@ -1513,7 +1371,7 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
   yMem.clearTileMap();
   yMem.writeTileText(9, 2, 'TYPE/');
   yMem.ram[0xc3a0 + 13 * 20 + 5] = 0xed;
-  const ySnapMove = readPokemonYellowSnapshot(yMem.readMem);
+  const ySnapMove = readPokemonGen1Snapshot(yMem.readMem, POKEMON_YELLOW_MEM);
   assert.equal(ySnapMove.hasTypeBox, true);
   assert.deepEqual(ySnapMove.cursorPos, { row: 13, col: 5 });
 
@@ -1526,7 +1384,6 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
   rMem.ram[0xd367] = 0;
   rMem.ram[0xd368] = 18;
   rMem.ram[0xd369] = 20;
-  rMem.ram[0xd736] = 0x80;
   rMem.ram[0xc109] = 0x04;
   rMem.ram[0xd163] = 1;
   rMem.writePartyMon(POKEMON_RED_BLUE_MEM, 0, {
@@ -1544,12 +1401,11 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
     moves: [10, 45, 52, 0],
     pp: [35, 40, 22, 0],
   });
-  rMem.write16(0xcfe6, 17);
   rMem.clearTileMap();
   rMem.writeTileText(9, 2, 'TYPE/');
   rMem.ram[0xc3a0 + 14 * 20 + 5] = 0xed;
 
-  const rPos = readPokemonRedOverworldPos(rMem.readMem);
+  const rPos = readPokemonGen1OverworldPos(rMem.readMem, POKEMON_RED_BLUE_MEM);
   assert.deepEqual(rPos, {
     isInBattle: 1,
     map: 3,
@@ -1560,11 +1416,9 @@ test('readPokemonYellow* and readPokemonRed* read exact version-specific WRAM of
     mapWidth: 40,
     partyCount: 1,
     facing: 0x04,
-    movementFlags: 0x80,
   });
 
-  const rSnap = readPokemonRedSnapshot(rMem.readMem);
-  assert.equal(rSnap.enemyHp, 17);
+  const rSnap = readPokemonGen1Snapshot(rMem.readMem, POKEMON_RED_BLUE_MEM);
   assert.equal(rSnap.party[0].species, 176);
   assert.equal(rSnap.battleMon.hp, 31);
   assert.equal(rSnap.hasTypeBox, true);
@@ -1578,7 +1432,7 @@ test('RAM-backed Pokémon Yellow round-trip Auto-Fight flow selects Thundershock
     createGen1Memory();
   const af = createAutoFight();
 
-  const setOverworld = ({ map, x, y, tileset, mapWidth, mapHeight, facing = 0x00, flags = 0 }) => {
+  const setOverworld = ({ map, x, y, tileset, mapWidth, mapHeight, facing = 0x00 }) => {
     ram[0xd056] = 0;
     ram[0xd35d] = map;
     ram[0xd361] = x;
@@ -1587,7 +1441,6 @@ test('RAM-backed Pokémon Yellow round-trip Auto-Fight flow selects Thundershock
     ram[0xd367] = mapHeight / 2;
     ram[0xd368] = mapWidth / 2;
     ram[0xc109] = facing;
-    ram[0xd735] = flags;
   };
 
   ram[0xd162] = 1;
@@ -1819,7 +1672,6 @@ function createCrystalMemory() {
     mapWidth = 20,
     mapHeight = 18,
     facing = 0x00,
-    stepType = 0x04,
     battleMode = 0,
   }) => {
     ram[mem.battleMode] = battleMode;
@@ -1831,7 +1683,6 @@ function createCrystalMemory() {
     ram[mem.curMapHeight] = mapHeight / 2;
     ram[mem.curMapWidth] = mapWidth / 2;
     ram[mem.playerDirection] = facing;
-    ram[mem.playerStepType] = stepType;
   };
   return {
     ram,
@@ -1846,40 +1697,7 @@ function createCrystalMemory() {
   };
 }
 
-test('getAutoFightProfile and isPokemonCrystalTitle recognize PM_CRYSTAL and POKEMON CRYSTAL without colliding with Gen 1', () => {
-  assert.equal(isPokemonCrystalTitle('PM_CRYSTAL'), true);
-  assert.equal(isPokemonCrystalTitle(' pm_crystal '), true);
-  assert.equal(isPokemonCrystalTitle('POKEMON CRYSTAL'), true);
-  assert.equal(isPokemonCrystalTitle('POKEMON YELLOW'), false);
-  assert.equal(isPokemonCrystalTitle('POKEMON RED'), false);
-  assert.equal(isPokemonYellowTitle('PM_CRYSTAL'), false);
-  assert.equal(isPokemonRedBlueTitle('PM_CRYSTAL'), false);
-  assert.equal(isSupportedAutoFightTitle('PM_CRYSTAL'), true);
-  assert.equal(isSupportedAutoFightTitle('POKEMON CRYSTAL'), true);
-
-  const crystal = getAutoFightProfile(' pm_crystal ');
-  assert.ok(crystal);
-  assert.equal(crystal.id, 'pokemon-crystal');
-  assert.equal(crystal.name, 'Pokémon Crystal');
-  assert.equal(crystal.mem, POKEMON_CRYSTAL_MEM);
-  assert.equal(crystal.pokeCenterConfigs, CRYSTAL_POKECENTER_CONFIGS);
-  assert.equal(Object.keys(CRYSTAL_POKECENTER_CONFIGS).length, 22);
-});
-
-test('pickAttackSlot skips Gen 2 non-attack/conditional moves while picking Gen 2 attacking moves', () => {
-  // False Swipe (206), Perish Song (195), Snore (173), Protect (182) -> all skipped
-  assert.equal(pickAttackSlot([206, 195, 173, 182], [40, 5, 15, 10]), -1);
-  // Charm (204), Baton Pass (226), Mirror Coat (243), Belly Drum (187) -> all skipped
-  assert.equal(pickAttackSlot([204, 226, 243, 187], [20, 40, 20, 10]), -1);
-  // Pain Split (220), Curse (174), Crunch (242) -> selects Crunch (slot 2)
-  assert.equal(pickAttackSlot([220, 174, 242, 0], [20, 10, 15, 0]), 2);
-  // Flame Wheel (172), Return (216), Hidden Power (237)
-  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 20, 15]), 2);
-  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 25, 0, 0]), 1);
-  assert.equal(pickAttackSlot([206, 172, 216, 237], [40, 0, 0, 15]), 3);
-});
-
-test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 WRAM, Eggs, jumps, and Disabled box', () => {
+test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 WRAM, Eggs, and Disabled box', () => {
   const cm = createCrystalMemory();
   cm.setOverworld({
     mapGroup: 26,
@@ -1890,7 +1708,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
     mapWidth: 40,
     mapHeight: 18,
     facing: 0x0c,
-    stepType: 0x09, // STEP_TYPE_PLAYER_JUMP
     battleMode: 1,
   });
   cm.ram[cm.mem.partyCount] = 2;
@@ -1938,7 +1755,6 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
     mapWidth: 40,
     partyCount: 2,
     facing: 0x0c,
-    movementFlags: 0x40,
   });
 
   const snap = readPokemonCrystalSnapshot(cm.readMem);
@@ -1962,7 +1778,7 @@ test('readPokemonCrystalOverworldPos and readPokemonCrystalSnapshot read Gen 2 W
   assert.deepEqual(disabledSnap.cursorPos, { row: 13, col: 5 });
 });
 
-test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg + Indigo Plateau + Crystal ledge)', () => {
+test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg + Indigo Plateau + low-HP heal)', () => {
   const profile = getAutoFightProfile('PM_CRYSTAL');
   const cm = createCrystalMemory();
   const af = createAutoFight();
@@ -2009,7 +1825,7 @@ test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg 
   }
   assert.equal(af.getState().hasHealPath, true);
 
-  // 2. Start Auto-Fight on Route 30 -> wild Pidgey -> select FIGHT -> Water Gun (slot 2)
+  // 2. Start Auto-Fight on Route 30 -> wild battle -> select FIGHT -> Water Gun (slot 2)
   af.start(profile.readSnapshot(cm.readMem));
   assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'moving');
 
@@ -2133,39 +1949,59 @@ test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg 
   assert.equal(res.phase, 'moving');
   assert.deepEqual(af.getState().anchor, { map: encodeCrystalMapId(26, 1), x: 8, y: 52 });
 
-  // 4. Indigo Plateau Heal Center (16, 2) coords (standX=3, standY=9, exitX=5, exitY=13) + Crystal ledge fast stop
-  const afIndigo = createAutoFight();
-  cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 13, tileset: 7, mapWidth: 18, mapHeight: 14 });
-  afIndigo.observe(profile.readOverworldPos(cm.readMem));
-  assert.equal(afIndigo.getState().pokeCenterName, 'Indigo Plateau Heal Center');
-  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 6, tileset: 3, mapWidth: 20, mapHeight: 18 });
-  afIndigo.observe(profile.readOverworldPos(cm.readMem));
-  // Single-tile Crystal ledge jump (playerStepType = 0x09)
-  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 7, tileset: 3, stepType: 0x09 });
-  afIndigo.observe(profile.readOverworldPos(cm.readMem));
-  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 8, tileset: 3, stepType: 0x04 });
-  afIndigo.observe(profile.readOverworldPos(cm.readMem));
-  assert.equal(afIndigo.exportTrail().trail[1].oneWay, true);
-
-  cm.ram[cm.mem.partyMon1 + 0x19] = 0;
-  afIndigo.start(profile.readSnapshot(cm.readMem));
-  afIndigo.step(profile.readSnapshot(cm.readMem));
-  // Blocked at ledge (9, 7) -> stops on 45th stuck frame
-  cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 7, tileset: 3 });
-  afIndigo.step(profile.readSnapshot(cm.readMem));
-  for (let i = 0; i < 44; i++) {
-    assert.equal(afIndigo.step(profile.readSnapshot(cm.readMem)).active, true);
+  // 4. Crystal proactive low-HP heal with Egg in party (6/21 HP, full PP)
+  cm.writePartyMon(0, {
+    species: 158,
+    hp: 6,
+    maxHp: 21,
+    level: 6,
+    moves: [43, 206, 55, 0],
+    pp: [30, 40, 25, 0],
+  });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'returning');
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'returning');
+  for (const [x, y] of [
+    [29, 2],
+    [29, 3],
+    [29, 4],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'returning');
   }
-  const ledgeStop = afIndigo.step(profile.readSnapshot(cm.readMem));
-  assert.equal(ledgeStop.active, false);
-  assert.match(ledgeStop.stopReason, /one-way/i);
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 3, tileset: 7, facing: 0x04 });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'healing');
+  for (let i = 0; i < 12; i++) af.step(profile.readSnapshot(cm.readMem));
+  cm.write16(cm.mem.partyMon1 + 0x22, 21); // HP healed to 21/21
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(af.getState().healSubphase, 'closing_dialogue');
+  assert.equal(res.buttons.b, true);
+  for (let i = 0; i < 8; i++) {
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).buttons.a, false);
+  }
+  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 4, tileset: 7, facing: 0x00 });
+  res = af.step(profile.readSnapshot(cm.readMem));
+  assert.equal(af.getState().healSubphase, 'exiting');
+  for (const [x, y] of [
+    [29, 4],
+    [29, 3],
+    [29, 2],
+  ]) {
+    cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
+    assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'walking_back');
+  }
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'walking_back');
+  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, mapWidth: 20, mapHeight: 54 });
+  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'moving');
 
-  // Verify Indigo Plateau nurse & exit navigation directly
+  // 5. Verify Indigo Plateau nurse & exit navigation directly
   const afIndigoCenter = createAutoFight();
   cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 13, tileset: 7, mapWidth: 18, mapHeight: 14 });
   afIndigoCenter.observe(profile.readOverworldPos(cm.readMem));
   cm.setOverworld({ mapGroup: 16, mapNumber: 1, x: 9, y: 6, tileset: 3, mapWidth: 20, mapHeight: 18 });
   afIndigoCenter.observe(profile.readOverworldPos(cm.readMem));
+  cm.ram[cm.mem.partyMon1 + 0x19] = 0;
   afIndigoCenter.start(profile.readSnapshot(cm.readMem));
   afIndigoCenter.step(profile.readSnapshot(cm.readMem));
   // Enter Indigo Plateau PokéCenter at (5, 13) -> steers left to x=3, then up to y=9
@@ -2188,547 +2024,4 @@ test('RAM-backed Pokémon Crystal full round-trip Auto-Fight (Cherrygrove + Egg 
   assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.right, true);
   cm.setOverworld({ mapGroup: 16, mapNumber: 2, x: 5, y: 10, tileset: 7, facing: 0x00 });
   assert.equal(afIndigoCenter.step(profile.readSnapshot(cm.readMem)).buttons.down, true);
-});
-
-test('Gen 1 exterior blackout recovery: faint in wild battle + overworld poison faint return along Heal Center path and resume grinding', () => {
-  const af = createAutoFight();
-
-  // Viridian PokéCenter (0x29) -> Viridian City (1) -> Route 1 (12)
-  af.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  for (const [x, y] of [
-    [23, 25],
-    [23, 26],
-    [23, 27],
-  ]) {
-    af.observe({ isInBattle: 0, map: 1, x, y, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  }
-  for (const [x, y] of [
-    [10, 0],
-    [10, 1],
-    [10, 2],
-  ]) {
-    af.observe({ isInBattle: 0, map: 12, x, y, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  }
-
-  af.start(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0 }));
-
-  // Enter wild battle -> battleMon ready
-  let res = af.step(
-    makeSnapshot({
-      map: 12,
-      x: 10,
-      y: 2,
-      tileset: 0,
-      isInBattle: 1,
-      battleMon: { hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
-    })
-  );
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'fighting');
-
-  // Exhaust initial 'a' pulse + cooldown (3 + 8 = 11 frames)
-  for (let i = 0; i < 10; i++) {
-    af.step(
-      makeSnapshot({
-        map: 12,
-        x: 10,
-        y: 2,
-        tileset: 0,
-        isInBattle: 1,
-        battleMon: { hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
-      })
-    );
-  }
-
-  // Faint frame: battleMon.hp === 0 while party[0].hp is momentarily stale -> enters recovering and pulses A
-  res = af.step(
-    makeSnapshot({
-      map: 12,
-      x: 10,
-      y: 2,
-      tileset: 0,
-      isInBattle: 1,
-      battleMon: { hp: 0, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
-      party: [{ species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }],
-    })
-  );
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.equal(res.buttons.a, true);
-
-  for (let i = 0; i < 10; i++) {
-    af.step(
-      makeSnapshot({
-        map: 12,
-        x: 10,
-        y: 2,
-        tileset: 0,
-        isInBattle: 1,
-        battleMon: { hp: 0, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] },
-        party: [{ species: 176, hp: 0, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }],
-      })
-    );
-  }
-
-  const deadParty = [{ species: 176, hp: 0, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }];
-  const healedParty = [{ species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }];
-
-  // isInBattle === 0xff: neutral when menuBoxText is empty, pulses 'a' when blackout text is shown
-  res = af.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-
-  res = af.step(
-    makeSnapshot({
-      map: 12,
-      x: 10,
-      y: 2,
-      tileset: 0,
-      isInBattle: 0xff,
-      menuBoxText: 'RED is out of useable POKeMON! RED blacked out!',
-      party: deadParty,
-    })
-  );
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.equal(res.buttons.a, true);
-  for (let i = 0; i < 10; i++) {
-    af.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  }
-
-  // HealParty runs on Viridian City map=1 while coords are still stale at (10, 10) -> must wait in recovering
-  res = af.step(makeSnapshot({ map: 1, x: 10, y: 10, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-
-  // SpecialWarpIn spawns healed player outside Viridian Heal Center at (1, 23, 26) -> walks DOWN along trail
-  res = af.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-  assert.equal(res.buttons.up, false);
-
-  res = af.step(makeSnapshot({ map: 1, x: 23, y: 27, tileset: 0, party: healedParty }));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-
-  for (const [x, y] of [
-    [10, 0],
-    [10, 1],
-  ]) {
-    res = af.step(makeSnapshot({ map: 12, x, y, tileset: 0, party: healedParty }));
-    assert.equal(res.phase, 'walking_back');
-    assert.equal(res.buttons.down, true);
-  }
-
-  // Back at Route 1 grind spot -> resumes moving with trail preserved
-  res = af.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, party: healedParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'moving');
-  assert.equal(af.getState().hasHealPath, true);
-  assert.deepEqual(af.getState().anchor, { map: 12, x: 10, y: 2 });
-
-  // Second recovery via overworld poison faint (isInBattle: 0, all party 0 HP)
-  res = af.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, isInBattle: 0, party: deadParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.equal(res.buttons.a, true);
-
-  res = af.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-});
-
-test('RAM-backed Pokémon Crystal blackout recovery supports interior and exterior spawns with Egg', () => {
-  const profile = getAutoFightProfile('PM_CRYSTAL');
-
-  const setupCrystalToRoute30 = () => {
-    const cm = createCrystalMemory();
-    const af = createAutoFight();
-    cm.ram[cm.mem.partyCount] = 2;
-    cm.writePartyMon(0, {
-      species: 158,
-      hp: 21,
-      maxHp: 21,
-      level: 6,
-      moves: [10, 55, 0, 0],
-      pp: [35, 25, 0, 0],
-    });
-    cm.writePartyMon(1, {
-      species: 175,
-      isEgg: true,
-      hp: 0,
-      maxHp: 0,
-      level: 1,
-      moves: [45, 0, 0, 0],
-      pp: [40, 0, 0, 0],
-    });
-
-    cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
-    af.observe(profile.readOverworldPos(cm.readMem));
-    for (const [x, y] of [
-      [29, 4],
-      [29, 3],
-      [29, 2],
-    ]) {
-      cm.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
-      af.observe(profile.readOverworldPos(cm.readMem));
-    }
-    for (const [x, y] of [
-      [8, 53],
-      [8, 52],
-    ]) {
-      cm.setOverworld({ mapGroup: 26, mapNumber: 1, x, y, tileset: 1, mapWidth: 20, mapHeight: 54 });
-      af.observe(profile.readOverworldPos(cm.readMem));
-    }
-    af.start(profile.readSnapshot(cm.readMem));
-    return { cm, af };
-  };
-
-  // Part A: Interior spawn inside Cherrygrove Heal Center (26, 5, 3, 3)
-  const { cm: cmIn, af: afIn } = setupCrystalToRoute30();
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
-  cmIn.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  assert.equal(afIn.step(profile.readSnapshot(cmIn.readMem)).phase, 'fighting');
-  for (let i = 0; i < 10; i++) afIn.step(profile.readSnapshot(cmIn.readMem));
-
-  // Faint -> battleMode clears to 0 on Route 30 while HP is still 0 (OverworldWhiteoutScript) -> pulses A
-  cmIn.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 0, maxHp: 21 });
-  cmIn.writePartyMon(0, { species: 158, hp: 0, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  let res = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(res.phase, 'recovering');
-  for (let i = 0; i < 10; i++) afIn.step(profile.readSnapshot(cmIn.readMem));
-
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 0 });
-  res = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-  assert.equal(res.buttons.a, true);
-
-  // Fade-in frames inside Cherrygrove PokéCenter (tileset still 1) -> stays recovering with neutral buttons
-  cmIn.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 3, tileset: 1, battleMode: 0 });
-  for (let i = 0; i < 2; i++) {
-    res = afIn.step(profile.readSnapshot(cmIn.readMem));
-    assert.equal(res.phase, 'recovering');
-    assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-  }
-
-  // Tileset 7 loads indoors at (3, 3) -> transitions to healing ('closing_dialogue'), never presses A
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 3, tileset: 7, facing: 0x00, battleMode: 0 });
-  res = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(res.phase, 'healing');
-  assert.equal(afIn.getState().healSubphase, 'closing_dialogue');
-  assert.equal(res.buttons.b, true);
-  for (let i = 0; i < 14; i++) {
-    const out = afIn.step(profile.readSnapshot(cmIn.readMem));
-    assert.equal(out.buttons.a, false);
-  }
-
-  // Step to (3, 4) -> exiting -> walk back along trail -> resumes moving
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 4, tileset: 7, facing: 0x00 });
-  res = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(afIn.getState().healSubphase, 'exiting');
-  assert.equal(res.buttons.down, true);
-
-  for (const [x, y] of [
-    [29, 4],
-    [29, 3],
-    [29, 2],
-  ]) {
-    cmIn.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
-    assert.equal(afIn.step(profile.readSnapshot(cmIn.readMem)).phase, 'walking_back');
-  }
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  assert.equal(afIn.step(profile.readSnapshot(cmIn.readMem)).phase, 'walking_back');
-  cmIn.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  res = afIn.step(profile.readSnapshot(cmIn.readMem));
-  assert.equal(res.phase, 'moving');
-  assert.deepEqual(afIn.getState().anchor, { map: encodeCrystalMapId(26, 1), x: 8, y: 52 });
-
-  // Part B: Exterior spawn at Cherrygrove City (26, 3, 29, 4)
-  const { cm: cmExt, af: afExt } = setupCrystalToRoute30();
-  cmExt.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, battleMode: 1 });
-  cmExt.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  afExt.step(profile.readSnapshot(cmExt.readMem));
-  cmExt.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 0, maxHp: 21 });
-  cmExt.writePartyMon(0, { species: 158, hp: 0, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  assert.equal(afExt.step(profile.readSnapshot(cmExt.readMem)).phase, 'recovering');
-
-  cmExt.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  cmExt.setOverworld({ mapGroup: 26, mapNumber: 3, x: 29, y: 4, tileset: 1, mapWidth: 40, mapHeight: 18, battleMode: 0 });
-  res = afExt.step(profile.readSnapshot(cmExt.readMem));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.up, true);
-
-  for (const [x, y] of [
-    [29, 3],
-    [29, 2],
-  ]) {
-    cmExt.setOverworld({ mapGroup: 26, mapNumber: 3, x, y, tileset: 1, mapWidth: 40, mapHeight: 18 });
-    assert.equal(afExt.step(profile.readSnapshot(cmExt.readMem)).phase, 'walking_back');
-  }
-  cmExt.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  assert.equal(afExt.step(profile.readSnapshot(cmExt.readMem)).phase, 'walking_back');
-  cmExt.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 52, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  assert.equal(afExt.step(profile.readSnapshot(cmExt.readMem)).phase, 'moving');
-});
-
-test('RAM-backed multi-Pokémon wild battle faint switch navigates Party Screen (skipping Egg) and recovers on full-party wipe', () => {
-  const profile = getAutoFightProfile('PM_CRYSTAL');
-  const cm = createCrystalMemory();
-  const af = createAutoFight();
-
-  cm.ram[cm.mem.partyCount] = 3;
-  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  cm.writePartyMon(1, { species: 175, isEgg: true, hp: 0, maxHp: 0, level: 1, moves: [45, 0, 0, 0], pp: [40, 0, 0, 0] });
-  cm.writePartyMon(2, { species: 155, hp: 22, maxHp: 22, level: 6, moves: [52, 0, 0, 0], pp: [25, 0, 0, 0] });
-
-  cm.setOverworld({ mapGroup: 26, mapNumber: 5, x: 3, y: 7, tileset: 7, mapWidth: 10, mapHeight: 8 });
-  af.observe(profile.readOverworldPos(cm.readMem));
-  cm.setOverworld({ mapGroup: 26, mapNumber: 3, x: 29, y: 4, tileset: 1, mapWidth: 40, mapHeight: 18 });
-  af.observe(profile.readOverworldPos(cm.readMem));
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54 });
-  af.observe(profile.readOverworldPos(cm.readMem));
-  af.start(profile.readSnapshot(cm.readMem));
-
-  // Battle starts with Totodile
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, battleMode: 1 });
-  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 21, maxHp: 21 });
-  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'fighting');
-  for (let i = 0; i < 10; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  // Totodile faints -> living Cyndaquil is at slot 2 -> pulses A for faint/Use next text
-  cm.writeBattleMon({ species: 158, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0], level: 6, hp: 0, maxHp: 21 });
-  cm.writePartyMon(0, { species: 158, hp: 0, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  let res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'fighting');
-  assert.equal(res.buttons.a, true);
-  for (let i = 0; i < 10; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  // Party Screen opens with cursor at slot 0 (row 0, col 0) -> down twice past Egg (row 2) to Cyndaquil (row 4) -> A
-  cm.clearTileMap();
-  cm.ram[cm.mem.tileMap + 0 * 20 + 0] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.buttons.down, true);
-  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  cm.ram[cm.mem.tileMap + 0 * 20 + 0] = 0x7f;
-  cm.ram[cm.mem.tileMap + 2 * 20 + 0] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.buttons.down, true);
-  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  cm.ram[cm.mem.tileMap + 2 * 20 + 0] = 0x7f;
-  cm.ram[cm.mem.tileMap + 4 * 20 + 0] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.buttons.a, true);
-  for (let i = 0; i < 14; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  // SWITCH submenu opens with cursor on STATS (row 14) above/below SWITCH (row 12) -> moves up -> A
-  cm.writeTileText(12, 12, 'SWITCH');
-  cm.writeTileText(14, 12, 'STATS');
-  cm.ram[cm.mem.tileMap + 14 * 20 + 11] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.buttons.up, true);
-  for (let i = 0; i < 8; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  cm.ram[cm.mem.tileMap + 14 * 20 + 11] = 0x7f;
-  cm.ram[cm.mem.tileMap + 12 * 20 + 11] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.buttons.a, true);
-  for (let i = 0; i < 14; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  // Cyndaquil enters battle and selects FIGHT
-  cm.clearTileMap();
-  cm.writeBattleMon({ species: 155, moves: [52, 0, 0, 0], pp: [25, 0, 0, 0], level: 6, hp: 22, maxHp: 22 });
-  cm.writeTileText(14, 10, 'FIGHT');
-  cm.writeTileText(16, 16, 'RUN');
-  cm.ram[cm.mem.tileMap + 14 * 20 + 9] = 0xed;
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.phase, 'fighting');
-  assert.equal(res.buttons.a, true);
-  for (let i = 0; i < 16; i++) af.step(profile.readSnapshot(cm.readMem));
-
-  // Cyndaquil ALSO faints (battleMon.hp hits 0 while party[2].hp is transiently stale, then hits 0) -> transitions to recovering
-  cm.clearTileMap();
-  cm.writeBattleMon({ species: 155, moves: [52, 0, 0, 0], pp: [25, 0, 0, 0], level: 6, hp: 0, maxHp: 22 });
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.active, true);
-  assert.equal(res.buttons.a, true);
-
-  cm.writePartyMon(2, { species: 155, hp: 0, maxHp: 22, level: 6, moves: [52, 0, 0, 0], pp: [25, 0, 0, 0] });
-  res = af.step(profile.readSnapshot(cm.readMem));
-  assert.equal(res.active, true);
-  assert.equal(res.phase, 'recovering');
-
-  // Recover at Cherrygrove exterior spawn and walk back to Route 30
-  cm.writePartyMon(0, { species: 158, hp: 21, maxHp: 21, level: 6, moves: [10, 55, 0, 0], pp: [35, 25, 0, 0] });
-  cm.writePartyMon(2, { species: 155, hp: 22, maxHp: 22, level: 6, moves: [52, 0, 0, 0], pp: [25, 0, 0, 0] });
-  cm.setOverworld({ mapGroup: 26, mapNumber: 3, x: 29, y: 4, tileset: 1, mapWidth: 40, mapHeight: 18, battleMode: 0 });
-  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'walking_back');
-  cm.setOverworld({ mapGroup: 26, mapNumber: 1, x: 8, y: 53, tileset: 1, mapWidth: 20, mapHeight: 54, battleMode: 0 });
-  assert.equal(af.step(profile.readSnapshot(cm.readMem)).phase, 'moving');
-});
-
-test('blackout recovery edge cases: one-way ledge, door avoidance, origin grace, ambush faint, wrong spawn, stall timeout, and manual stop', () => {
-  const deadParty = [{ species: 176, hp: 0, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }];
-  const healedParty = [{ species: 176, hp: 27, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [35, 40, 25, 0] }];
-  const zeroPpParty = [{ species: 176, hp: 20, maxHp: 27, level: 9, moves: [10, 45, 52, 0], pp: [0, 40, 0, 0] }];
-
-  // 1. Outbound one-way ledge: fainting teleports to Heal Center and walking_back hops forward over ledge
-  const afLedge = createAutoFight();
-  afLedge.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afLedge.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afLedge.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afLedge.observe({ isInBattle: 0, map: 1, x: 23, y: 28, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0x40 });
-  afLedge.observe({ isInBattle: 0, map: 1, x: 23, y: 29, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afLedge.start(makeSnapshot({ map: 1, x: 23, y: 29, tileset: 0 }));
-  assert.equal(afLedge.step(makeSnapshot({ map: 1, x: 23, y: 29, tileset: 0, isInBattle: 0xff, party: deadParty })).phase, 'recovering');
-  let res = afLedge.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-  res = afLedge.step(makeSnapshot({ map: 1, x: 23, y: 28, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-  res = afLedge.step(makeSnapshot({ map: 1, x: 23, y: 29, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'moving');
-
-  // 2. Door re-entry avoidance: trail went LEFT from door (23,25) -> (22,25) -> (22,26), blackout spawns at (23,26)
-  const afDoor = createAutoFight();
-  afDoor.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afDoor.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afDoor.observe({ isInBattle: 0, map: 1, x: 22, y: 25, tileset: 0, partyCount: 1, facing: 0x08, movementFlags: 0 });
-  afDoor.observe({ isInBattle: 0, map: 1, x: 22, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afDoor.start(makeSnapshot({ map: 1, x: 22, y: 26, tileset: 0 }));
-  afDoor.step(makeSnapshot({ map: 1, x: 22, y: 26, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  res = afDoor.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.left, true);
-  assert.equal(res.buttons.up, false);
-  res = afDoor.step(makeSnapshot({ map: 1, x: 22, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'moving');
-
-  // 3. Same-map grind spot near Heal Center (1, 23, 27): respects origin grace before warp moves player to (1, 23, 26)
-  const afOrigin = createAutoFight();
-  afOrigin.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afOrigin.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afOrigin.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afOrigin.observe({ isInBattle: 0, map: 1, x: 23, y: 27, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afOrigin.start(makeSnapshot({ map: 1, x: 23, y: 27, tileset: 0 }));
-  afOrigin.step(makeSnapshot({ map: 1, x: 23, y: 27, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  for (let i = 0; i < 10; i++) {
-    res = afOrigin.step(makeSnapshot({ map: 1, x: 23, y: 27, tileset: 0, isInBattle: 0, party: healedParty }));
-    assert.equal(res.phase, 'recovering');
-    assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-  }
-  res = afOrigin.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'walking_back');
-  assert.equal(res.buttons.down, true);
-
-  // 4. Fainting during ambush while returning walks all the way back to original grind spot
-  const afAmbush = createAutoFight();
-  afAmbush.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.observe({ isInBattle: 0, map: 12, x: 10, y: 1, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.observe({ isInBattle: 0, map: 12, x: 10, y: 2, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afAmbush.start(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, party: zeroPpParty }));
-  assert.equal(afAmbush.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, party: zeroPpParty })).phase, 'returning');
-  assert.equal(afAmbush.step(makeSnapshot({ map: 12, x: 10, y: 1, tileset: 0, party: zeroPpParty })).phase, 'returning');
-  assert.equal(
-    afAmbush.step(
-      makeSnapshot({
-        map: 12,
-        x: 10,
-        y: 1,
-        tileset: 0,
-        isInBattle: 1,
-        party: zeroPpParty,
-        battleMon: { hp: 20, maxHp: 27, level: 9, moves: [10, 45, 0, 0], pp: [0, 40, 0, 0] },
-      })
-    ).phase,
-    'fleeing'
-  );
-  res = afAmbush.step(
-    makeSnapshot({
-      map: 12,
-      x: 10,
-      y: 1,
-      tileset: 0,
-      isInBattle: 1,
-      party: deadParty,
-      battleMon: { hp: 0, maxHp: 27, level: 9, moves: [10, 45, 0, 0], pp: [0, 40, 0, 0] },
-    })
-  );
-  assert.equal(res.phase, 'recovering');
-  assert.equal(afAmbush.step(makeSnapshot({ map: 1, x: 23, y: 26, tileset: 0, isInBattle: 0, party: healedParty })).phase, 'walking_back');
-  assert.equal(afAmbush.step(makeSnapshot({ map: 12, x: 10, y: 0, tileset: 0, isInBattle: 0, party: healedParty })).phase, 'walking_back');
-  assert.equal(afAmbush.step(makeSnapshot({ map: 12, x: 10, y: 1, tileset: 0, isInBattle: 0, party: healedParty })).phase, 'walking_back');
-  res = afAmbush.step(makeSnapshot({ map: 12, x: 10, y: 2, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.phase, 'moving');
-  assert.deepEqual(afAmbush.getState().anchor, { map: 12, x: 10, y: 2 });
-
-  // 5. Wrong respawn map (Pallet Town map=0 when Viridian 0x29 was tracked) stops after grace and clears trail
-  const afWrong = createAutoFight();
-  afWrong.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afWrong.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afWrong.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afWrong.start(makeSnapshot({ map: 12, x: 10, y: 0, tileset: 0 }));
-  afWrong.step(makeSnapshot({ map: 12, x: 10, y: 0, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  for (let i = 0; i < 179; i++) {
-    res = afWrong.step(makeSnapshot({ map: 0, x: 5, y: 6, tileset: 0, isInBattle: 0, party: healedParty }));
-    assert.equal(res.active, true);
-    assert.equal(res.phase, 'recovering');
-  }
-  res = afWrong.step(makeSnapshot({ map: 0, x: 5, y: 6, tileset: 0, isInBattle: 0, party: healedParty }));
-  assert.equal(res.active, false);
-  assert.match(res.stopReason, /different location/i);
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-  assert.equal(afWrong.getState().hasHealPath, false);
-  assert.equal(afWrong.getState().pokeCenterMap, null);
-
-  // 6. Recovery stall timeout after 1800 frames
-  const afStall = createAutoFight();
-  afStall.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStall.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStall.start(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0 }));
-  for (let i = 0; i < 1799; i++) {
-    res = afStall.step(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0, isInBattle: 0xff, party: deadParty }));
-    assert.equal(res.active, true);
-    assert.equal(res.phase, 'recovering');
-  }
-  res = afStall.step(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  assert.equal(res.active, false);
-  assert.equal(res.stopReason, 'fainted recovery stalled');
-  assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
-
-  // 7a. Manual stop() during recovering while outside on trail preserves/reconciles trail
-  const afStopOut = createAutoFight();
-  afStopOut.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopOut.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopOut.observe({ isInBattle: 0, map: 1, x: 23, y: 26, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopOut.observe({ isInBattle: 0, map: 12, x: 10, y: 0, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopOut.start(makeSnapshot({ map: 12, x: 10, y: 0, tileset: 0 }));
-  afStopOut.step(makeSnapshot({ map: 12, x: 10, y: 0, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  afStopOut.stop('manual');
-  assert.equal(afStopOut.getState().hasHealPath, true);
-  assert.equal(afStopOut.getState().trailLength, 3);
-
-  // 7b. Manual stop() during recovering while inside tracked Heal Center marks inPokeCenter true & clears trail
-  const afStopIn = createAutoFight();
-  afStopIn.observe({ isInBattle: 0, map: 0x29, x: 3, y: 7, tileset: 6, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopIn.observe({ isInBattle: 0, map: 1, x: 23, y: 25, tileset: 0, partyCount: 1, facing: 0x00, movementFlags: 0 });
-  afStopIn.start(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0 }));
-  afStopIn.step(makeSnapshot({ map: 1, x: 23, y: 25, tileset: 0, isInBattle: 0xff, party: deadParty }));
-  afStopIn.step(makeSnapshot({ map: 0x29, x: 3, y: 3, tileset: 6, isInBattle: 0, party: deadParty }));
-  afStopIn.stop('manual');
-  assert.equal(afStopIn.getState().inPokeCenter, true);
-  assert.equal(afStopIn.getState().pokeCenterMap, 0x29);
-  assert.equal(afStopIn.getState().trailLength, 0);
 });
