@@ -2,13 +2,15 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { buildTestRom } from './make-test-rom.mjs';
+import { buildTestRom, buildGbaTestRom } from './make-test-rom.mjs';
 
 const REPO_DIR = path.resolve(import.meta.dirname, '..');
 const TMP_DIR = path.join(import.meta.dirname, '.tmp');
 const ROM_PATH = path.join(TMP_DIR, 'mbc3-test.gb');
 const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
 const CRYSTAL_ROM_PATH = path.join(TMP_DIR, 'pokemon-crystal-test.gbc');
+const GBA_ROM_PATH = path.join(TMP_DIR, 'gba-test.gba');
+const EMERALD_ROM_PATH = path.join(TMP_DIR, 'pokemon-emerald-test.gba');
 const IMPORTED_SAV_PATH = path.join(TMP_DIR, 'imported.sav');
 const DOWNLOADS_DIR = path.join(TMP_DIR, 'downloads');
 const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
@@ -107,6 +109,14 @@ async function main() {
   fs.writeFileSync(
     CRYSTAL_ROM_PATH,
     buildTestRom({ title: 'PM_CRYSTAL', cgbFlag: 0xc0, cartType: 0x10 })
+  );
+  fs.writeFileSync(
+    GBA_ROM_PATH,
+    buildGbaTestRom({ title: 'GBA TEST', gameCode: 'BTEE' })
+  );
+  fs.writeFileSync(
+    EMERALD_ROM_PATH,
+    buildGbaTestRom({ title: 'POKEMON EMER', gameCode: 'BPEE' })
   );
   fs.rmSync(DOWNLOADS_DIR, { recursive: true, force: true });
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
@@ -1620,6 +1630,592 @@ async function main() {
     await client.send('Emulation.clearDeviceMetricsOverride');
     await client.eval(`window.__retroIdle.getTouchControls().setVisible(null)`);
 
+    // Synthetic GBA Mode 3 boot, 240x160 viewport, SRAM/state/speed/reload/reset/touch checks
+    const docGba = await client.send('DOM.getDocument');
+    const gbaInputNode = await client.send('DOM.querySelector', {
+      nodeId: docGba.root.nodeId,
+      selector: '#rom-input',
+    });
+    await client.send('DOM.setFileInputFiles', {
+      nodeId: gbaInputNode.nodeId,
+      files: [GBA_ROM_PATH],
+    });
+    await waitFor(
+      async () =>
+        await client.eval(
+          `Boolean(window.__retroIdle?.getEmulator()?.isPlaying && window.__retroIdle.getEmulator().platform === 'gba' && window.__retroIdle.getEmulator().sramSize === 32768) && ${HAS_NON_BLANK_CANVAS_EXPR}`
+        ),
+      15000,
+      50
+    );
+
+    const gbaState = await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const c = document.getElementById('screen');
+        const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const colors = new Set();
+        let hash = 2166136261;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] > 0) {
+            colors.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+          }
+          hash ^= data[i] ^ (data[i + 1] << 8) ^ (data[i + 2] << 16);
+          hash = Math.imul(hash, 16777619);
+        }
+        return {
+          playing: emu.isPlaying,
+          platform: emu.platform,
+          width: c.width,
+          height: c.height,
+          gbaModeClass: document.body.classList.contains('gba-mode'),
+          status: document.getElementById('status').textContent,
+          sramSize: emu.sramSize,
+          sramEcho: emu.readMem(0x02000000),
+          inputMarker: emu.readMem(0x02000008),
+          autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
+          exportSavDisabled: document.getElementById('export-sav-btn').disabled,
+          importSavDisabled: document.getElementById('import-sav-btn').disabled,
+          saveStateDisabled: document.getElementById('save-state-btn').disabled,
+          loadStateDisabled: document.getElementById('load-state-btn').disabled,
+          colorCount: colors.size,
+          hash1: hash >>> 0,
+        };
+      })()
+    `);
+    assert.equal(gbaState.playing, true);
+    assert.equal(gbaState.platform, 'gba');
+    assert.equal(gbaState.width, 240);
+    assert.equal(gbaState.height, 160);
+    assert.equal(gbaState.gbaModeClass, true);
+    assert.match(gbaState.status, /^Playing: GBA TEST \(GBA · BTEE\)$/);
+    assert.equal(gbaState.sramSize, 32768);
+    assert.equal(gbaState.sramEcho, 0xa5);
+    assert.equal(gbaState.inputMarker, 0xe4);
+    assert.equal(gbaState.autoFightDisabled, true);
+    assert.equal(gbaState.exportSavDisabled, false);
+    assert.equal(gbaState.importSavDisabled, false);
+    assert.equal(gbaState.saveStateDisabled, false);
+    assert.equal(gbaState.loadStateDisabled, true);
+    assert.ok(gbaState.colorCount >= 2, `Expected >= 2 colors on GBA canvas, got ${gbaState.colorCount}`);
+
+    await sleep(250);
+    const gbaHash2 = await client.eval(`
+      (() => {
+        const c = document.getElementById('screen');
+        const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let hash = 2166136261;
+        for (let i = 0; i < data.length; i += 4) {
+          hash ^= data[i] ^ (data[i + 1] << 8) ^ (data[i + 2] << 16);
+          hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+      })()
+    `);
+    assert.notEqual(gbaHash2, gbaState.hash1, 'GBA canvas pixels must animate across VBlank frames');
+
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'x',
+      code: 'KeyX',
+      windowsVirtualKeyCode: 88,
+      nativeVirtualKeyCode: 88,
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0x02000008) === 0x1b`),
+      5000,
+      30
+    );
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'x',
+      code: 'KeyX',
+      windowsVirtualKeyCode: 88,
+      nativeVirtualKeyCode: 88,
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0x02000008) === 0xe4`),
+      5000,
+      30
+    );
+
+    const gbaSavPath = path.join(DOWNLOADS_DIR, 'GBA_TEST.sav');
+    fs.rmSync(gbaSavPath, { force: true });
+    await client.eval(`document.getElementById('export-sav-btn').click()`, { userGesture: true });
+    await waitFor(
+      async () =>
+        fs.existsSync(gbaSavPath) &&
+        fs.statSync(gbaSavPath).size === 32768 &&
+        (await client.eval(`document.getElementById('status').textContent.includes('exported .sav')`)),
+      6000,
+      30
+    );
+    const gbaExported = fs.readFileSync(gbaSavPath);
+    assert.equal(gbaExported.length, 32768);
+    assert.equal(gbaExported[0x2000], 0xa5);
+    fs.rmSync(gbaSavPath, { force: true });
+
+    const gbaImportedBytes = new Uint8Array(32768);
+    gbaImportedBytes.set([0xde, 0xad, 0xbe, 0xef], 0x0000);
+    gbaImportedBytes[0x2001] = 0x42;
+    fs.writeFileSync(IMPORTED_SAV_PATH, gbaImportedBytes);
+
+    const docGbaSav = await client.send('DOM.getDocument');
+    const gbaSavInputNode = await client.send('DOM.querySelector', {
+      nodeId: docGbaSav.root.nodeId,
+      selector: '#sav-input',
+    });
+    await client.send('DOM.setFileInputFiles', {
+      nodeId: gbaSavInputNode.nodeId,
+      files: [IMPORTED_SAV_PATH],
+    });
+    await waitFor(
+      async () =>
+        await client.eval(
+          `(() => { const emu = window.__retroIdle.getEmulator(); return !document.getElementById('import-sav-btn').disabled && emu?.isPlaying && emu.platform === 'gba' && emu.sramSize === 32768 && (emu.module._gba_read32(emu.e, 0x02000004) >>> 0) >= 2 && document.getElementById('status').textContent.includes('imported .sav'); })()`
+        ),
+      8000,
+      40
+    );
+    const gbaSramAfterImport = await client.eval(`
+      (() => {
+        const ram = window.__retroIdle.getEmulator().getExtRam();
+        return {
+          head: Array.from(ram.slice(0, 4)),
+          b2000: ram[0x2000],
+          b2001: ram[0x2001],
+        };
+      })()
+    `);
+    assert.deepEqual(gbaSramAfterImport.head, [0xde, 0xad, 0xbe, 0xef]);
+    assert.equal(gbaSramAfterImport.b2000, 0xa5);
+    assert.equal(gbaSramAfterImport.b2001, 0x42);
+
+    const gbaFrameBeforeSave = await waitFor(async () => {
+      const f = await client.eval(
+        `(() => { const emu = window.__retroIdle.getEmulator(); return emu.module._gba_read32(emu.e, 0x02000004) >>> 0; })()`
+      );
+      return f >= 15 ? f : false;
+    }, 8000, 25);
+
+    await client.eval(`document.getElementById('save-state-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `!document.getElementById('save-state-btn').disabled && document.getElementById('status').textContent.includes('state saved')`
+        ),
+      6000,
+      30
+    );
+    await waitFor(async () => {
+      const f = await client.eval(
+        `(() => { const emu = window.__retroIdle.getEmulator(); return emu.module._gba_read32(emu.e, 0x02000004) >>> 0; })()`
+      );
+      return f - gbaFrameBeforeSave >= 35 ? f : false;
+    }, 8000, 25);
+
+    let gbaFrameAfterLoad = 0;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await client.eval(`document.getElementById('load-state-btn').click()`);
+      await waitFor(
+        async () =>
+          await client.eval(
+            `!document.getElementById('load-state-btn').disabled && document.getElementById('status').textContent.includes('state loaded')`
+          ),
+        6000,
+        25
+      );
+      const loadedInfo = await client.eval(`
+        (() => {
+          const emu = window.__retroIdle.getEmulator();
+          return {
+            playing: emu.isPlaying,
+            frame: emu.module._gba_read32(emu.e, 0x02000004) >>> 0,
+          };
+        })()
+      `);
+      assert.equal(loadedInfo.playing, true);
+      assert.ok(
+        loadedInfo.frame >= gbaFrameBeforeSave && loadedInfo.frame <= gbaFrameBeforeSave + 25,
+        `GBA Load State #${attempt} frame ${loadedInfo.frame} not within [${gbaFrameBeforeSave}, ${gbaFrameBeforeSave + 25}]`
+      );
+      gbaFrameAfterLoad = loadedInfo.frame;
+    }
+
+    const gbaT1Start = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    await sleep(350);
+    const gbaT1End = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    const gbaTicks1x = gbaT1End - gbaT1Start;
+    assert.ok(gbaTicks1x > 0, `Expected positive GBA ticks at 1x, got ${gbaTicks1x}`);
+
+    await client.eval(`document.querySelector('.speed-btn[data-speed="4"]').click()`);
+    const gbaT4Start = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    await sleep(350);
+    const gbaT4End = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
+    const gbaTicks4x = gbaT4End - gbaT4Start;
+    assert.ok(
+      gbaTicks4x > gbaTicks1x * 2.2,
+      `Expected GBA 4x ticks (${gbaTicks4x}) > 2.2x of 1x ticks (${gbaTicks1x})`
+    );
+    await client.eval(`document.querySelector('.speed-btn[data-speed="1"]').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getSpeed() === 1 && window.__retroIdle.getEmulator().speed === 1`
+        ),
+      4000,
+      20
+    );
+
+    await client.eval(`window.__beforeReload = true`);
+    await client.send('Page.reload');
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__beforeReload === undefined && Boolean(window.__retroIdle?.getEmulator()?.isPlaying && window.__retroIdle.getEmulator().platform === 'gba' && document.getElementById('status')?.textContent.includes('resumed auto-save'))`
+        ),
+      15000,
+      40
+    );
+    const gbaReload1 = await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const c = document.getElementById('screen');
+        return {
+          width: c.width,
+          height: c.height,
+          gbaMode: document.body.classList.contains('gba-mode'),
+          loadDisabled: document.getElementById('load-state-btn').disabled,
+          frame: emu.module._gba_read32(emu.e, 0x02000004) >>> 0,
+        };
+      })()
+    `);
+    assert.equal(gbaReload1.width, 240);
+    assert.equal(gbaReload1.height, 160);
+    assert.equal(gbaReload1.gbaMode, true);
+    assert.equal(gbaReload1.loadDisabled, false);
+    await sleep(250);
+    const gbaReloadFrame2 = await client.eval(
+      `(() => { const emu = window.__retroIdle.getEmulator(); return emu.module._gba_read32(emu.e, 0x02000004) >>> 0; })()`
+    );
+    assert.ok(
+      gbaReloadFrame2 > gbaReload1.frame,
+      `GBA should keep advancing after reload (${gbaReload1.frame} -> ${gbaReloadFrame2})`
+    );
+
+    await client.eval(`document.getElementById('reset-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `(() => { const emu = window.__retroIdle.getEmulator(); return !document.getElementById('reset-btn').disabled && emu?.isPlaying && emu.platform === 'gba' && emu.sramSize === 32768 && (emu.module._gba_read32(emu.e, 0x02000004) >>> 0) >= 2; })()`
+        ),
+      10000,
+      40
+    );
+    const gbaSramAfterReset = await client.eval(`
+      (() => {
+        const ram = window.__retroIdle.getEmulator().getExtRam();
+        return {
+          head: Array.from(ram.slice(0, 4)),
+          b2000: ram[0x2000],
+          b2001: ram[0x2001],
+        };
+      })()
+    `);
+    assert.deepEqual(gbaSramAfterReset.head, [0xde, 0xad, 0xbe, 0xef]);
+    assert.equal(gbaSramAfterReset.b2000, 0xa5);
+    assert.equal(gbaSramAfterReset.b2001, 0x42);
+
+    // Mobile GBA portrait & landscape touch checks (L/R shoulder buttons visible, no overflow)
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await client.send('Emulation.setTouchEmulationEnabled', {
+      enabled: true,
+      maxTouchPoints: 5,
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getTouchControls().visible === true`),
+      5000,
+      40
+    );
+    const gbaPortraitLayout = await client.eval(`
+      (() => {
+        const screenRect = document.getElementById('screen').getBoundingClientRect();
+        const gamepadRect = document.getElementById('touch-gamepad').getBoundingClientRect();
+        const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
+        const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          screenBottom: screenRect.bottom,
+          gamepadBottom: gamepadRect.bottom,
+          lWidth: lRect.width,
+          lHeight: lRect.height,
+          lBottom: lRect.bottom,
+          rWidth: rRect.width,
+          rHeight: rRect.height,
+          rBottom: rRect.bottom,
+        };
+      })()
+    `);
+    assert.ok(
+      gbaPortraitLayout.scrollWidth <= gbaPortraitLayout.innerWidth,
+      `GBA portrait overflow: ${gbaPortraitLayout.scrollWidth} > ${gbaPortraitLayout.innerWidth}`
+    );
+    assert.ok(
+      gbaPortraitLayout.lWidth > 40 && gbaPortraitLayout.lHeight > 20,
+      `GBA portrait L button not visible: ${JSON.stringify(gbaPortraitLayout)}`
+    );
+    assert.ok(
+      gbaPortraitLayout.rWidth > 40 && gbaPortraitLayout.rHeight > 20,
+      `GBA portrait R button not visible: ${JSON.stringify(gbaPortraitLayout)}`
+    );
+    assert.ok(
+      Math.max(
+        gbaPortraitLayout.screenBottom,
+        gbaPortraitLayout.gamepadBottom,
+        gbaPortraitLayout.lBottom,
+        gbaPortraitLayout.rBottom
+      ) <= 844,
+      `GBA portrait controls overflow 844px height (${JSON.stringify(gbaPortraitLayout)})`
+    );
+
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 844,
+      height: 390,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    const gbaLandscapeLayout = await client.eval(`
+      (() => {
+        const screenRect = document.getElementById('screen').getBoundingClientRect();
+        const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
+        const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+        const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+        const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
+        const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          dpadRight: dpadRect.right,
+          screenLeft: screenRect.left,
+          screenRight: screenRect.right,
+          aLeft: aRect.left,
+          screenBottom: screenRect.bottom,
+          dpadBottom: dpadRect.bottom,
+          aBottom: aRect.bottom,
+          startBottom: startRect.bottom,
+          lWidth: lRect.width,
+          lHeight: lRect.height,
+          lBottom: lRect.bottom,
+          rWidth: rRect.width,
+          rHeight: rRect.height,
+          rBottom: rRect.bottom,
+        };
+      })()
+    `);
+    assert.ok(
+      gbaLandscapeLayout.scrollWidth <= gbaLandscapeLayout.innerWidth,
+      `GBA landscape overflow: ${gbaLandscapeLayout.scrollWidth} > ${gbaLandscapeLayout.innerWidth}`
+    );
+    assert.ok(
+      gbaLandscapeLayout.lWidth > 40 && gbaLandscapeLayout.lHeight > 20,
+      `GBA landscape L button not visible: ${JSON.stringify(gbaLandscapeLayout)}`
+    );
+    assert.ok(
+      gbaLandscapeLayout.rWidth > 40 && gbaLandscapeLayout.rHeight > 20,
+      `GBA landscape R button not visible: ${JSON.stringify(gbaLandscapeLayout)}`
+    );
+    assert.ok(
+      gbaLandscapeLayout.dpadRight <= gbaLandscapeLayout.screenLeft + 8,
+      `Expected D-Pad left of GBA screen in landscape (${gbaLandscapeLayout.dpadRight} <= ${gbaLandscapeLayout.screenLeft})`
+    );
+    assert.ok(
+      gbaLandscapeLayout.screenRight <= gbaLandscapeLayout.aLeft + 8,
+      `Expected A button right of GBA screen in landscape (${gbaLandscapeLayout.screenRight} <= ${gbaLandscapeLayout.aLeft})`
+    );
+    assert.ok(
+      Math.max(
+        gbaLandscapeLayout.screenBottom,
+        gbaLandscapeLayout.dpadBottom,
+        gbaLandscapeLayout.aBottom,
+        gbaLandscapeLayout.startBottom,
+        gbaLandscapeLayout.lBottom,
+        gbaLandscapeLayout.rBottom
+      ) <= 390,
+      `GBA landscape controls overflow 390px height (${JSON.stringify(gbaLandscapeLayout)})`
+    );
+
+    await client.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await client.send('Emulation.clearDeviceMetricsOverride');
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getTouchControls().visible === false`),
+      5000,
+      40
+    );
+
+    // Synthetic Pokémon Emerald (BPEE) 128KB Flash, BoxPokemon decryption & Auto-Fight verification
+    const docEmerald = await client.send('DOM.getDocument');
+    const emeraldInputNode = await client.send('DOM.querySelector', {
+      nodeId: docEmerald.root.nodeId,
+      selector: '#rom-input',
+    });
+    await client.send('DOM.setFileInputFiles', {
+      nodeId: emeraldInputNode.nodeId,
+      files: [EMERALD_ROM_PATH],
+    });
+    await waitFor(
+      async () =>
+        await client.eval(
+          `Boolean(window.__retroIdle?.getEmulator()?.isPlaying && window.__retroIdle.getEmulator().platform === 'gba' && window.__retroIdle?.getAutoFight()?.profile === 'pokemon-emerald')`
+        ),
+      12000,
+      50
+    );
+
+    const emeraldUi = await client.eval(`({
+      status: document.getElementById('status').textContent,
+      sramSize: window.__retroIdle.getEmulator().sramSize,
+      autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
+      healHidden: document.getElementById('heal-center-status').hidden,
+      supported: window.__retroIdle.getAutoFight().supported,
+      profile: window.__retroIdle.getAutoFight().profile,
+    })`);
+    assert.match(
+      emeraldUi.status,
+      /^Playing: POKEMON EMER \(GBA · BPEE\)$/,
+      `Unexpected Emerald status: ${emeraldUi.status}`
+    );
+    assert.equal(emeraldUi.sramSize, 131072, 'Expected 128 KB (131072 B) Flash save for BPEE');
+    assert.equal(emeraldUi.autoFightDisabled, false);
+    assert.equal(emeraldUi.healHidden, false);
+    assert.equal(emeraldUi.supported, true);
+    assert.equal(emeraldUi.profile, 'pokemon-emerald');
+
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const mod = emu.module;
+        const w8 = (a, v) => mod._gba_write8(emu.e, a >>> 0, v & 0xff);
+        const w16 = (a, v) => mod._gba_write16(emu.e, a >>> 0, v & 0xffff);
+        const w32 = (a, v) => mod._gba_write32(emu.e, a >>> 0, v >>> 0);
+
+        const SB1 = 0x02025a48;
+        const LAYOUT_ADDR = 0x0203a000;
+        w32(0x03005d8c, SB1);          // gSaveBlock1Ptr
+        w32(0x02037318, LAYOUT_ADDR);  // gMapHeader -> mapLayoutPtr
+        w32(LAYOUT_ADDR, 20);          // mapWidth
+        w32(LAYOUT_ADDR + 4, 20);      // mapHeight
+        w16(0x02037318 + 0x12, 61);    // Oldale Center mapLayoutId
+
+        w32(0x030022c0 + 0x04, 0x08085e5c | 1); // gMain.callback2 = CB2_Overworld
+        w8(0x030022c0 + 0x439, 0);              // not in battle
+        w32(0x02022fec, 0);                     // gBattleTypeFlags = 0
+        w8(0x0202433a, 0);                      // gBattleOutcome = 0
+
+        w16(SB1 + 0x00, 7);  // pos.x
+        w16(SB1 + 0x02, 8);  // pos.y
+        w8(SB1 + 0x04, 2);   // mapGroup = Oldale
+        w8(SB1 + 0x05, 2);   // mapNumber = Oldale Heal Center
+        w16(SB1 + 0x32, 61);
+
+        w8(0x02037590 + 0x05, 0); // gPlayerAvatar.objectEventId = 0
+        w8(0x02037350 + 0x00, 1); // active
+        w8(0x02037350 + 0x02, 1); // isPlayer
+        w16(0x02037350 + 0x10, 7 + 7);
+        w16(0x02037350 + 0x12, 8 + 7);
+        w8(0x02037350 + 0x18, 2); // DIR_NORTH
+
+        // Party count = 1, encrypted Treecko (species 277, move Pound = 1, PP = 35, HP 21/21)
+        w8(0x020244e9, 1);
+        const base = 0x020244ec;
+        const personality = 23; // 23 % 24 = 23 -> [3, 2, 1, 0]: Growth slot 3, Attacks slot 2
+        const otId = 0xdeadbeef >>> 0;
+        const key = (personality ^ otId) >>> 0;
+        w32(base, personality);
+        w32(base + 0x04, otId);
+        w8(base + 0x13, 0x02); // hasSpecies = 1
+
+        const subs = [
+          [0, 0, 0],
+          [0, 0, 0],
+          [1, 0, 35],  // slot 2 (Attacks): move1=1 (Pound), pp1=35
+          [277, 0, 0], // slot 3 (Growth): species=277 (Treecko)
+        ];
+        for (let s = 0; s < 4; s++) {
+          for (let w = 0; w < 3; w++) {
+            w32(base + 0x20 + s * 12 + w * 4, (subs[s][w] ^ key) >>> 0);
+          }
+        }
+        w8(base + 0x54, 5);   // level
+        w16(base + 0x56, 21); // hp
+        w16(base + 0x58, 21); // maxHp
+      })()
+    `);
+
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAutoFight().inPokeCenter === true`),
+      6000,
+      30
+    );
+    const emeraldCheck = await client.eval(`({
+      profile: window.__retroIdle.getAutoFight().profile,
+      pokeCenterName: window.__retroIdle.getAutoFight().pokeCenterName,
+      healStatus: document.getElementById('heal-center-status').textContent,
+      snapshot: window.__retroIdle.getAutoFight().snapshot(),
+    })`);
+    assert.equal(emeraldCheck.pokeCenterName, 'Oldale Heal Center');
+    assert.match(emeraldCheck.healStatus, /Heal Center visited: Oldale Heal Center/);
+    assert.equal(emeraldCheck.snapshot.mapGroup, 2);
+    assert.equal(emeraldCheck.snapshot.mapNumber, 2);
+    assert.equal(emeraldCheck.snapshot.x, 7);
+    assert.equal(emeraldCheck.snapshot.y, 8);
+    assert.equal(emeraldCheck.snapshot.tileset, 61);
+    assert.equal(emeraldCheck.snapshot.partyCount, 1);
+    assert.equal(emeraldCheck.snapshot.party[0].species, 277);
+    assert.equal(emeraldCheck.snapshot.party[0].hp, 21);
+    assert.equal(emeraldCheck.snapshot.party[0].moves[0], 1);
+    assert.equal(emeraldCheck.snapshot.party[0].pp[0], 35);
+
+    // Inject BATTLE_TYPE_TRAINER (1 << 3) into EWRAM -> verify automatic Auto-Fight stop
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const mod = emu.module;
+        const w8 = (a, v) => mod._gba_write8(emu.e, a >>> 0, v & 0xff);
+        const w16 = (a, v) => mod._gba_write16(emu.e, a >>> 0, v & 0xffff);
+        const w32 = (a, v) => mod._gba_write32(emu.e, a >>> 0, v >>> 0);
+        w8(0x030022c0 + 0x439, 0x02); // inBattle = true
+        w32(0x02022fec, 1 << 3);      // BATTLE_TYPE_TRAINER
+        const bBase = 0x02024084;
+        w16(bBase, 277);
+        w16(bBase + 0x0c, 1);
+        w8(bBase + 0x24, 35);
+        w16(bBase + 0x28, 21);
+        w8(bBase + 0x2a, 5);
+        w16(bBase + 0x2c, 21);
+      })()
+    `);
+    await client.eval(`document.getElementById('auto-fight-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'trainer battle'`
+        ),
+      6000,
+      30
+    );
+    const emeraldTrainerStop = await client.eval(`({
+      statusText: document.getElementById('auto-fight-status').textContent,
+      isError: document.getElementById('auto-fight-status').classList.contains('error'),
+    })`);
+    assert.equal(emeraldTrainerStop.statusText, 'Auto-Fight stopped: trainer battle');
+    assert.equal(emeraldTrainerStop.isError, true);
+
     const prefsRefreshCheck = {
       reloadOn: {
         speed: prefsAfterReload1.speed,
@@ -1674,6 +2270,31 @@ async function main() {
         healStatus: crystalCheck.healStatus,
         bank2MapGroup: crystalCheck.bank2MapGroup,
         trainerStop: trainerStopUi.statusText,
+      },
+      gbaCheck: {
+        status: gbaState.status,
+        sramSize: gbaState.sramSize,
+        frameBeforeSave: gbaFrameBeforeSave,
+        frameAfterLoad: gbaFrameAfterLoad,
+        speedRatio: Number((gbaTicks4x / gbaTicks1x).toFixed(2)),
+        landscapeMaxBottom: Math.round(
+          Math.max(
+            gbaLandscapeLayout.screenBottom,
+            gbaLandscapeLayout.dpadBottom,
+            gbaLandscapeLayout.aBottom,
+            gbaLandscapeLayout.startBottom,
+            gbaLandscapeLayout.lBottom,
+            gbaLandscapeLayout.rBottom
+          )
+        ),
+      },
+      emeraldCheck: {
+        status: emeraldUi.status,
+        sramSize: emeraldUi.sramSize,
+        profile: emeraldCheck.profile,
+        pokeCenterName: emeraldCheck.pokeCenterName,
+        healStatus: emeraldCheck.healStatus,
+        trainerStop: emeraldTrainerStop.statusText,
       },
       prefsRefreshCheck,
       mobileCheck: {

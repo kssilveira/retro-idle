@@ -147,6 +147,155 @@ export function buildTestRom({ title = 'MBC3 TEST', cgbFlag = 0x00, cartType = 0
   return rom;
 }
 
+/** Build an original 512 KB GBA Mode 3 test ROM without copyrighted assets. */
+export function buildGbaTestRom({ title = 'GBA TEST', gameCode = 'BTEE' } = {}) {
+  const rom = new Uint8Array(512 * 1024);
+
+  const words = [];
+  const emit = (w) => words.push(w >>> 0);
+  const patchBranch = (idx, targetIdx) => {
+    const off = targetIdx - idx - 2;
+    words[idx] = (words[idx] & 0xff000000) | (off & 0x00ffffff);
+  };
+  const ldrLit = (rd, val) => ({ idx: words.length, rd, val: val >>> 0 });
+  const pendingLits = [];
+
+  // Entry at 0x080000C0
+  pendingLits.push(ldrLit(4, 0x04000000)); // R4 = I/O base
+  emit(0xe59f4000);
+  pendingLits.push(ldrLit(5, 0x06000000)); // R5 = VRAM base
+  emit(0xe59f5000);
+  pendingLits.push(ldrLit(6, 0x02000000)); // R6 = EWRAM base
+  emit(0xe59f6000);
+  pendingLits.push(ldrLit(7, 0x0e002000)); // R7 = SRAM + 0x2000
+  emit(0xe59f7000);
+  pendingLits.push(ldrLit(0, 0x00000403)); // DISPCNT = Mode 3 + BG2
+  emit(0xe59f0000);
+  emit(0xe1c400b0); // STRH R0, [R4, #0]
+
+  // Write 0xA5 to SRAM[0x2000], read back to EWRAM[0x02000000]
+  emit(0xe3a000a5); // MOV R0, #0xA5
+  emit(0xe5c70000); // STRB R0, [R7, #0]
+  emit(0xe5d70000); // LDRB R0, [R7, #0]
+  emit(0xe5c60000); // STRB R0, [R6, #0]
+
+  // Zero frame counter at EWRAM[0x02000004]
+  emit(0xe3a08000); // MOV R8, #0
+  emit(0xe5868004); // STR R8, [R6, #4]
+
+  // Main VBlank loop
+  const waitVblIdx = words.length;
+  emit(0xe1d400b6); // LDRH R0, [R4, #6] (REG_VCOUNT)
+  emit(0xe35000a0); // CMP R0, #160
+  const bWaitVblIdx = words.length;
+  emit(0x1a000000); // BNE wait_vbl
+  patchBranch(bWaitVblIdx, waitVblIdx);
+
+  // Increment frame counter
+  emit(0xe5968004); // LDR R8, [R6, #4]
+  emit(0xe2888001); // ADD R8, R8, #1
+  emit(0xe5868004); // STR R8, [R6, #4]
+
+  // Poll KEYINPUT (0x04000130): bit 0 low when A is pressed
+  pendingLits.push(ldrLit(12, 0x04000130)); // R12 = REG_KEYINPUT
+  emit(0xe59fc000);
+  emit(0xe1d400b6); // wait — read R12 directly
+  words.pop();
+  emit(0xe1dc00b0); // LDRH R0, [R12, #0]
+  emit(0xe3100001); // TST R0, #1
+  const bNotPressedIdx = words.length;
+  emit(0x1a000000); // BNE not_pressed
+
+  // A pressed: marker = 0x1B, base color = 0x001F (red)
+  emit(0xe3a0101b); // MOV R1, #0x1B
+  emit(0xe3a0201f); // MOV R2, #0x1F
+  const bAfterInputIdx = words.length;
+  emit(0xea000000); // B after_input
+
+  // A released: marker = 0xE4, base color = 0x7C00 (blue)
+  const notPressedIdx = words.length;
+  patchBranch(bNotPressedIdx, notPressedIdx);
+  emit(0xe3a010e4); // MOV R1, #0xE4
+  emit(0xe3a02b1f); // MOV R2, #0x7C00
+
+  const afterInputIdx = words.length;
+  patchBranch(bAfterInputIdx, afterInputIdx);
+  emit(0xe5c61008); // STRB R1, [R6, #8]
+
+  // Animated pixel color R2 |= (R8 & 0x1F) << 5, fill 240x16 banner
+  emit(0xe208301f); // AND R3, R8, #0x1F
+  emit(0xe1822283); // ORR R2, R2, R3, LSL #5
+  emit(0xe3a09000); // MOV R9, #0
+  pendingLits.push(ldrLit(10, 240 * 16)); // 16 rows of Mode 3 pixels
+  emit(0xe59fa000);
+
+  const drawLoopIdx = words.length;
+  emit(0xe1a0b089); // MOV R11, R9, LSL #1
+  emit(0xe085b00b); // ADD R11, R5, R11
+  emit(0xe1cb20b0); // STRH R2, [R11, #0]
+  emit(0xe2899001); // ADD R9, R9, #1
+  emit(0xe159000a); // CMP R9, R10
+  const bDrawLoopIdx = words.length;
+  emit(0x3a000000); // BCC draw_loop
+  patchBranch(bDrawLoopIdx, drawLoopIdx);
+
+  // Wait for VBlank end (VCOUNT != 160)
+  const waitEndIdx = words.length;
+  emit(0xe1d400b6); // LDRH R0, [R4, #6]
+  emit(0xe35000a0); // CMP R0, #160
+  const bWaitEndIdx = words.length;
+  emit(0x0a000000); // BEQ wait_end
+  patchBranch(bWaitEndIdx, waitEndIdx);
+
+  const bMainIdx = words.length;
+  emit(0xea000000); // B wait_vbl
+  patchBranch(bMainIdx, waitVblIdx);
+
+  // Literal pool at end of code
+  for (const lit of pendingLits) {
+    const litIdx = words.length;
+    const byteOff = (litIdx - lit.idx - 2) * 4;
+    words[lit.idx] = (words[lit.idx] & 0xfffff000) | (byteOff & 0xfff);
+    emit(lit.val);
+  }
+
+  // Write B 0x00C0 at offset 0x0000
+  const entryBranch = 0xea000000 | (((0xc0 - 8) / 4) & 0x00ffffff);
+  rom[0] = entryBranch & 0xff;
+  rom[1] = (entryBranch >> 8) & 0xff;
+  rom[2] = (entryBranch >> 16) & 0xff;
+  rom[3] = (entryBranch >> 24) & 0xff;
+
+  const cleanTitle = String(title).slice(0, 12);
+  for (let i = 0; i < cleanTitle.length; i++) {
+    rom[0x0a0 + i] = cleanTitle.charCodeAt(i);
+  }
+  const cleanCode = String(gameCode).padEnd(4, ' ').slice(0, 4);
+  for (let i = 0; i < 4; i++) {
+    rom[0x0ac + i] = cleanCode.charCodeAt(i);
+  }
+  rom[0x0b0] = 0x30;
+  rom[0x0b1] = 0x31;
+  rom[0x0b2] = 0x96;
+
+  let chk = 0;
+  for (let i = 0x0a0; i <= 0x0bc; i++) {
+    chk = (chk - rom[i]) & 0xff;
+  }
+  rom[0x0bd] = (chk - 0x19) & 0xff;
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const addr = 0x0c0 + i * 4;
+    rom[addr] = w & 0xff;
+    rom[addr + 1] = (w >>> 8) & 0xff;
+    rom[addr + 2] = (w >>> 16) & 0xff;
+    rom[addr + 3] = (w >>> 24) & 0xff;
+  }
+
+  return rom;
+}
+
 if (path.resolve(process.argv[1] || '') === import.meta.filename) {
   const outPath = path.resolve(process.argv[2] || path.join(import.meta.dirname, '.tmp', 'mbc3-test.gb'));
   const rom = buildTestRom();

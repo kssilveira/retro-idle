@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="retro-idle" />
-  <title>retro-idle — Game Boy Emulator</title>
+  <title>retro-idle — Game Boy &amp; GBA Emulator</title>
   <link rel="icon" href="data:," />
   <style>
     :root {
@@ -19,6 +19,13 @@
       --text: #e2e8f0;
       --muted: #94a3b8;
       --accent: #38bdf8;
+      --screen-w: 160;
+      --screen-h: 144;
+    }
+
+    body.gba-mode {
+      --screen-w: 240;
+      --screen-h: 160;
     }
 
     * {
@@ -80,7 +87,7 @@
 
     .screen-slot {
       width: min(480px, 100%);
-      aspect-ratio: 160 / 144;
+      aspect-ratio: var(--screen-w) / var(--screen-h);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -240,6 +247,7 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       grid-template-areas:
+        "shoulders shoulders"
         "dpad ab"
         "meta meta";
       align-items: center;
@@ -252,6 +260,43 @@
       -webkit-user-select: none;
       user-select: none;
       -webkit-touch-callout: none;
+    }
+
+    .pad-shoulders {
+      grid-area: shoulders;
+      width: 100%;
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 6px;
+      pointer-events: none;
+    }
+
+    body.gba-mode .pad-shoulders {
+      display: flex;
+    }
+
+    .gb-shoulder-btn {
+      pointer-events: auto;
+      min-width: 68px;
+      min-height: 28px;
+      padding: 4px 14px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      touch-action: none;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--muted);
+      transition: transform 60ms ease, background-color 60ms ease, border-color 60ms ease, color 60ms ease;
+    }
+
+    .gb-shoulder-btn.pressed {
+      background: #0c4a6e;
+      border-color: var(--accent);
+      color: #f8fafc;
+      transform: scale(0.95);
     }
 
     .pad-left {
@@ -450,7 +495,7 @@
 
       .screen-slot {
         order: 2;
-        width: min(100%, calc((100dvh - 370px) * 160 / 144));
+        width: min(100%, calc((100dvh - 370px) * var(--screen-w) / var(--screen-h)));
         min-width: min(100%, 240px);
       }
 
@@ -532,14 +577,21 @@
         grid-column: 2;
         grid-row: 1;
         order: initial;
-        width: min(calc(100vw - 310px), calc((100dvh - 58px) * 160 / 144), 380px);
+        width: min(calc(100vw - 310px), calc((100dvh - 58px) * var(--screen-w) / var(--screen-h)), 420px);
         min-width: 0;
         height: auto;
-        aspect-ratio: 160 / 144;
+        aspect-ratio: var(--screen-w) / var(--screen-h);
       }
 
       body.touch-controls-visible .touch-gamepad {
         display: contents;
+      }
+
+      body.touch-controls-visible .pad-shoulders {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        z-index: 1;
+        padding: 0 10px;
       }
 
       body.touch-controls-visible .pad-left {
@@ -555,6 +607,7 @@
       body.touch-controls-visible .pad-center {
         grid-column: 2;
         grid-row: 2;
+        z-index: 2;
         gap: 14px;
       }
 
@@ -593,8 +646,8 @@
     </div>
 
     <div class="controls">
-      <label class="file-label" for="rom-input">Load ROM (.gb / .gbc)</label>
-      <input type="file" id="rom-input" accept=".gb,.gbc" />
+      <label class="file-label" for="rom-input">Load ROM (.gb / .gbc / .gba)</label>
+      <input type="file" id="rom-input" accept=".gb,.gbc,.gba" />
       <button type="button" id="toggle-play" disabled>Pause</button>
       <button type="button" id="reset-btn" disabled>Reset</button>
       <button type="button" id="save-state-btn" disabled>Save State</button>
@@ -602,9 +655,9 @@
       <button type="button" id="export-sav-btn" disabled>Export .sav</button>
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
-      <button type="button" id="auto-fight-btn" aria-pressed="false" disabled title="Pokémon Red / Blue / Yellow / Crystal">Auto-Fight</button>
+      <button type="button" id="auto-fight-btn" aria-pressed="false" disabled title="Pokémon Red / Blue / Yellow / Crystal / Emerald">Auto-Fight</button>
       <button type="button" id="mute-btn" class="active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
-      <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen Game Boy controls">Touch Pad</button>
+      <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
 
@@ -617,11 +670,15 @@
       <button type="button" class="speed-btn" data-speed="20" aria-pressed="false" title="Audio muted above 1x">20x</button>
     </div>
 
-    <div id="status">Drop a .gb / .gbc ROM anywhere or click Load ROM.</div>
+    <div id="status">Drop a .gb / .gbc / .gba ROM anywhere or click Load ROM.</div>
     <div id="auto-fight-status" hidden></div>
     <div id="heal-center-status" hidden></div>
 
-    <section id="touch-gamepad" class="touch-gamepad" aria-label="Game Boy controls" hidden>
+    <section id="touch-gamepad" class="touch-gamepad" aria-label="Gamepad controls" hidden>
+      <div class="pad-shoulders">
+        <button type="button" class="gb-shoulder-btn" data-gb-btn="l" aria-label="L shoulder button">L</button>
+        <button type="button" class="gb-shoulder-btn" data-gb-btn="r" aria-label="R shoulder button">R</button>
+      </div>
       <div class="pad-left">
         <div id="touch-dpad" class="dpad" role="group" aria-label="D-Pad">
           <div class="dpad-arm dpad-up" data-gb-btn="up" aria-hidden="true">&#9650;</div>
@@ -647,6 +704,7 @@
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
       A: <kbd>X</kbd> &middot;
       B: <kbd>Z</kbd> &middot;
+      L/R: <kbd>Q</kbd>/<kbd>E</kbd> &middot;
       Start: <kbd>Enter</kbd> &middot;
       Select: <kbd>Shift</kbd> &middot;
       Speed: <kbd>1</kbd>&ndash;<kbd>5</kbd> &middot;
@@ -664,6 +722,24 @@
 
     const SCREEN_WIDTH = 160;
     const SCREEN_HEIGHT = 144;
+    const GBA_WIDTH = 240;
+    const GBA_HEIGHT = 160;
+    const GBA_CPU_TICKS_PER_SECOND = 16777216;
+    const GBA_CYCLES_PER_FRAME = 280896;
+    const GBA_FRAME_SEC = GBA_CYCLES_PER_FRAME / GBA_CPU_TICKS_PER_SECOND;
+    const GBA_AUDIO_STAGE_FRAMES = 1024;
+    const GBA_KEY_BITS = {
+      a: 1 << 0,
+      b: 1 << 1,
+      select: 1 << 2,
+      start: 1 << 3,
+      right: 1 << 4,
+      left: 1 << 5,
+      up: 1 << 6,
+      down: 1 << 7,
+      r: 1 << 8,
+      l: 1 << 9,
+    };
     const AUDIO_FRAMES = 4096;
     const DEFAULT_AUDIO_SAMPLE_RATE = 44100;
     const AUDIO_LATENCY_SEC = 0.1;
@@ -724,6 +800,8 @@
       KeyD: 'right',
       KeyX: 'a',
       KeyZ: 'b',
+      KeyQ: 'l',
+      KeyE: 'r',
       Enter: 'start',
       ShiftLeft: 'select',
       ShiftRight: 'select',
@@ -772,6 +850,7 @@
     }
 
     let binjgb;
+    let mgbaPromise = null;
     let audioCtx = null;
     let audioGain = null;
     let isMuted = true;
@@ -779,8 +858,10 @@
     let emu = null;
     let currentSpeed = 1;
     let currentRomBytes = null;
+    let currentRomPlatform = 'gb';
     let currentRomId = '';
     let currentRomTitle = '';
+    let currentRomGameCode = '';
     let currentHeaderText = '';
     let hasManualSave = false;
     let isBusy = false;
@@ -923,7 +1004,64 @@
       return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
     }
 
-    function parseRomHeader(bytes) {
+    async function ensureMgba() {
+      if (!mgbaPromise) {
+        mgbaPromise = import('./vendor/mgba/mgba.js').then((mod) =>
+          mod.default({ locateFile: (path) => `./vendor/mgba/${path}` })
+        );
+      }
+      return mgbaPromise;
+    }
+
+    function syncScreenGeometry(width, height) {
+      const isGba = width === GBA_WIDTH;
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      document.body.classList.toggle('gba-mode', isGba);
+      pipWindow?.document?.body?.classList?.toggle('gba-mode', isGba);
+    }
+
+    function detectRomPlatform(bytes, label = '') {
+      const lower = String(label).toLowerCase();
+      if (lower.endsWith('.gba')) return 'gba';
+      if (lower.endsWith('.gb') || lower.endsWith('.gbc')) return 'gb';
+      if (bytes && bytes.length >= 0xc0 && bytes[0xb2] === 0x96) {
+        let chk = 0;
+        for (let i = 0xa0; i <= 0xbc; i++) {
+          chk = (chk - bytes[i]) & 0xff;
+        }
+        chk = (chk - 0x19) & 0xff;
+        if (chk === bytes[0xbd]) return 'gba';
+      }
+      return 'gb';
+    }
+
+    function parseGbaHeader(bytes) {
+      if (!bytes || bytes.length < 0xc0) return null;
+      const readAscii = (start, end) => {
+        let out = '';
+        for (let i = start; i <= end; i++) {
+          const ch = bytes[i];
+          if (ch === 0) break;
+          if (ch >= 0x20 && ch <= 0x7e) out += String.fromCharCode(ch);
+        }
+        return out.trim();
+      };
+      const title = readAscii(0xa0, 0xab) || 'UNKNOWN';
+      const gameCode = readAscii(0xac, 0xaf);
+      return {
+        platform: 'gba',
+        title,
+        gameCode,
+        mbc: gameCode ? `GBA · ${gameCode}` : 'GBA',
+      };
+    }
+
+    function parseRomHeader(bytes, label = '') {
+      const platform = detectRomPlatform(bytes, label);
+      if (platform === 'gba') {
+        return parseGbaHeader(bytes);
+      }
       if (!bytes || bytes.length < 0x0150) return null;
       let title = '';
       for (let i = 0x0134; i <= 0x0142; i++) {
@@ -934,7 +1072,70 @@
       title = title.trim() || 'UNKNOWN';
       const typeCode = bytes[0x0147];
       const mbc = CARTRIDGE_TYPES[typeCode] || `TYPE 0x${typeCode.toString(16).padStart(2, '0').toUpperCase()}`;
-      return { title, mbc, typeCode };
+      return { platform: 'gb', title, gameCode: '', mbc, typeCode };
+    }
+
+    function readControllerInputState(overrideButtons) {
+      if (overrideButtons) {
+        return { ...overrideButtons };
+      }
+      const next = {
+        up: heldKeys.has('up') || heldTouchButtons.has('up'),
+        down: heldKeys.has('down') || heldTouchButtons.has('down'),
+        left: heldKeys.has('left') || heldTouchButtons.has('left'),
+        right: heldKeys.has('right') || heldTouchButtons.has('right'),
+        a: heldKeys.has('a') || heldTouchButtons.has('a'),
+        b: heldKeys.has('b') || heldTouchButtons.has('b'),
+        start: heldKeys.has('start') || heldTouchButtons.has('start'),
+        select: heldKeys.has('select') || heldTouchButtons.has('select'),
+        l: heldKeys.has('l') || heldTouchButtons.has('l'),
+        r: heldKeys.has('r') || heldTouchButtons.has('r'),
+      };
+
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (const pad of pads) {
+        if (!pad || !pad.connected) continue;
+        const b = pad.buttons || [];
+        const ax = pad.axes || [];
+        const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
+        next.a ||= pressed(0);
+        next.b ||= pressed(1);
+        next.l ||= pressed(4);
+        next.r ||= pressed(5);
+        next.select ||= pressed(8);
+        next.start ||= pressed(9);
+        next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
+        next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
+        next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
+        next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
+        break;
+      }
+      return next;
+    }
+
+    function scheduleStereoAudioBuffer(emuObj, frameCount, fillChannels) {
+      if (emuObj.speed !== 1 || !shouldOutputAudio() || frameCount <= 0) return;
+      const ctx = getAudioContext({ create: false });
+      if (!ctx || ctx.state !== 'running') return;
+      const nowSec = ctx.currentTime;
+      const nowPlusLatency = nowSec + AUDIO_LATENCY_SEC;
+      emuObj.audioStartSec = emuObj.audioStartSec || nowPlusLatency;
+      if (emuObj.audioStartSec >= nowSec) {
+        const buffer = ctx.createBuffer(2, frameCount, emuObj.audioSampleRate);
+        fillChannels(buffer.getChannelData(0), buffer.getChannelData(1));
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audioGain || ctx.destination);
+        activeAudioSources.add(src);
+        src.onended = () => {
+          activeAudioSources.delete(src);
+          src.disconnect();
+        };
+        src.start(emuObj.audioStartSec);
+        emuObj.audioStartSec += frameCount / emuObj.audioSampleRate;
+      } else {
+        emuObj.audioStartSec = nowPlusLatency;
+      }
     }
 
     function openDb() {
@@ -983,6 +1184,9 @@
         canvasEl,
         { onExtRamUpdated, onFrame, speed = 1, animationWindow = window } = {}
       ) {
+        this.platform = 'gb';
+        this.width = SCREEN_WIDTH;
+        this.height = SCREEN_HEIGHT;
         this.module = module;
         this.onExtRamUpdated = onExtRamUpdated;
         this.onFrame = onFrame;
@@ -1146,41 +1350,9 @@
       }
 
       syncInput() {
-        let next;
-        if (this.overrideButtons) {
-          next = { ...this.overrideButtons };
-        } else {
-          next = {
-            up: heldKeys.has('up') || heldTouchButtons.has('up'),
-            down: heldKeys.has('down') || heldTouchButtons.has('down'),
-            left: heldKeys.has('left') || heldTouchButtons.has('left'),
-            right: heldKeys.has('right') || heldTouchButtons.has('right'),
-            a: heldKeys.has('a') || heldTouchButtons.has('a'),
-            b: heldKeys.has('b') || heldTouchButtons.has('b'),
-            start: heldKeys.has('start') || heldTouchButtons.has('start'),
-            select: heldKeys.has('select') || heldTouchButtons.has('select'),
-          };
-
-          const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-          for (const pad of pads) {
-            if (!pad || !pad.connected) continue;
-            const b = pad.buttons || [];
-            const ax = pad.axes || [];
-            const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
-            next.a ||= pressed(0);
-            next.b ||= pressed(1);
-            next.select ||= pressed(8);
-            next.start ||= pressed(9);
-            next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
-            next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
-            next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
-            next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
-            break;
-          }
-        }
-
+        const next = readControllerInputState(this.overrideButtons);
         const setters = this.getJoypadSetters();
-        for (const k of Object.keys(next)) {
+        for (const k of Object.keys(setters)) {
           if (next[k] !== this.lastButtons[k]) {
             this.lastButtons[k] = next[k];
             setters[k](this.e, next[k] ? 1 : 0);
@@ -1190,35 +1362,15 @@
 
       pushAudio() {
         if (this.speed !== 1 || !shouldOutputAudio()) return;
-        const ctx = getAudioContext({ create: false });
-        if (!ctx || ctx.state !== 'running') return;
         const ptr = this.module._get_audio_buffer_ptr(this.e);
         const cap = this.module._get_audio_buffer_capacity(this.e);
         const samples = new Uint8Array(this.module.HEAP8.buffer, ptr, cap);
-        const nowSec = ctx.currentTime;
-        const nowPlusLatency = nowSec + AUDIO_LATENCY_SEC;
-        this.audioStartSec = this.audioStartSec || nowPlusLatency;
-        if (this.audioStartSec >= nowSec) {
-          const buffer = ctx.createBuffer(2, AUDIO_FRAMES, this.audioSampleRate);
-          const ch0 = buffer.getChannelData(0);
-          const ch1 = buffer.getChannelData(1);
+        scheduleStereoAudioBuffer(this, AUDIO_FRAMES, (ch0, ch1) => {
           for (let i = 0; i < AUDIO_FRAMES; i++) {
             ch0[i] = (samples[2 * i] * 0.5) / 255;
             ch1[i] = (samples[2 * i + 1] * 0.5) / 255;
           }
-          const src = ctx.createBufferSource();
-          src.buffer = buffer;
-          src.connect(audioGain || ctx.destination);
-          activeAudioSources.add(src);
-          src.onended = () => {
-            activeAudioSources.delete(src);
-            src.disconnect();
-          };
-          src.start(this.audioStartSec);
-          this.audioStartSec += AUDIO_FRAMES / this.audioSampleRate;
-        } else {
-          this.audioStartSec = nowPlusLatency;
-        }
+        });
       }
 
       captureFrame() {
@@ -1330,6 +1482,321 @@
         if (this.romPtr) {
           this.module._free(this.romPtr);
           this.romPtr = 0;
+        }
+      }
+    }
+
+    class MgbaEmulator {
+      constructor(
+        module,
+        romBytes,
+        extRamBytes,
+        canvasEl,
+        { onExtRamUpdated, onSramSizeChange, onFrame, speed = 1, animationWindow = window } = {}
+      ) {
+        this.platform = 'gba';
+        this.width = GBA_WIDTH;
+        this.height = GBA_HEIGHT;
+        this.module = module;
+        this.onExtRamUpdated = onExtRamUpdated;
+        this.onSramSizeChange = onSramSizeChange;
+        this.onFrame = onFrame;
+        const parsedSpeed = Number(speed);
+        this.speed = Number.isFinite(parsedSpeed) && parsedSpeed > 0 ? parsedSpeed : 1;
+        this.rafWindow = animationWindow && !animationWindow.closed ? animationWindow : window;
+        this.overrideButtons = null;
+        this.ctx = canvasEl.getContext('2d');
+        this.imageData = this.ctx.createImageData(GBA_WIDTH, GBA_HEIGHT);
+        this.audioSampleRate = audioCtx?.sampleRate || DEFAULT_AUDIO_SAMPLE_RATE;
+
+        const romPtr = module._malloc(romBytes.byteLength);
+        let savePtr = 0;
+        const saveLen = extRamBytes && extRamBytes.byteLength > 0 ? extRamBytes.byteLength : 0;
+        try {
+          new Uint8Array(module.HEAP8.buffer, romPtr, romBytes.byteLength).set(romBytes);
+          if (saveLen > 0) {
+            savePtr = module._malloc(saveLen);
+            new Uint8Array(module.HEAP8.buffer, savePtr, saveLen).set(extRamBytes);
+          }
+          this.e = module._gba_create(romPtr, romBytes.byteLength, savePtr, saveLen, this.audioSampleRate);
+        } finally {
+          module._free(romPtr);
+          if (savePtr) module._free(savePtr);
+        }
+        if (!this.e) {
+          throw new Error('Invalid GBA ROM');
+        }
+
+        this.lastKnownSramSize = this.sramSize;
+        this.rafId = 0;
+        this.lastMs = 0;
+        this.accumSec = 0;
+        this.audioStartSec = 0;
+        this.audioStage = new Float32Array(GBA_AUDIO_STAGE_FRAMES * 2 * 2);
+        this.audioStageFrames = 0;
+        this.destroyed = false;
+        this.lastKeyMask = 0;
+        module._gba_set_keys(this.e, 0);
+      }
+
+      get isPaused() {
+        return this.rafId === 0;
+      }
+
+      get isPlaying() {
+        return !this.destroyed && this.rafId !== 0;
+      }
+
+      get sramSize() {
+        return this.destroyed || !this.e ? 0 : this.module._gba_get_save_size(this.e);
+      }
+
+      getSaveState() {
+        const size = this.module._gba_get_state_size(this.e);
+        if (!size) return new Uint8Array();
+        const ptr = this.module._malloc(size);
+        try {
+          if (!this.module._gba_save_state(this.e, ptr)) {
+            throw new Error('Failed to capture GBA state');
+          }
+          return new Uint8Array(new Uint8Array(this.module.HEAP8.buffer, ptr, size));
+        } finally {
+          this.module._free(ptr);
+        }
+      }
+
+      loadState(stateBytes) {
+        if (!stateBytes || !stateBytes.byteLength) return false;
+        const size = this.module._gba_get_state_size(this.e);
+        if (!size || stateBytes.byteLength !== size) return false;
+        const ptr = this.module._malloc(size);
+        try {
+          new Uint8Array(this.module.HEAP8.buffer, ptr, size).set(stateBytes);
+          const ok = Boolean(this.module._gba_load_state(this.e, ptr, size));
+          if (ok) {
+            this.accumSec = 0;
+            this.audioStageFrames = 0;
+            stopScheduledAudio();
+            this.audioStartSec = 0;
+          }
+          return ok;
+        } finally {
+          this.module._free(ptr);
+        }
+      }
+
+      getTicks() {
+        return this.destroyed || !this.e
+          ? 0
+          : this.module._gba_get_frame_count(this.e) * GBA_CYCLES_PER_FRAME;
+      }
+
+      setSpeed(speed) {
+        const next = Number(speed);
+        if (!Number.isFinite(next) || next <= 0 || next === this.speed) return;
+        this.speed = next;
+        this.accumSec = 0;
+        this.audioStageFrames = 0;
+        stopScheduledAudio();
+        this.audioStartSec = 0;
+      }
+
+      setAnimationWindow(win) {
+        const nextWin = win && !win.closed ? win : window;
+        if (nextWin === this.rafWindow) return;
+        const wasPlaying = this.rafId !== 0;
+        if (wasPlaying) {
+          if (!this.rafWindow.closed) {
+            this.rafWindow.cancelAnimationFrame(this.rafId);
+          }
+          this.rafId = 0;
+        }
+        this.rafWindow = nextWin;
+        this.lastMs = 0;
+        if (wasPlaying && !this.destroyed) {
+          this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
+        }
+      }
+
+      getExtRam() {
+        const size = this.sramSize;
+        if (size <= 0) return new Uint8Array();
+        const ptr = this.module._malloc(size);
+        try {
+          const readLen = this.module._gba_read_save(this.e, ptr, size);
+          if (!readLen) return new Uint8Array();
+          return new Uint8Array(new Uint8Array(this.module.HEAP8.buffer, ptr, readLen));
+        } finally {
+          this.module._free(ptr);
+        }
+      }
+
+      readMem(addr) {
+        return this.destroyed || !this.e ? 0 : this.module._gba_read8(this.e, addr >>> 0) & 0xff;
+      }
+
+      readWramLinear(addr) {
+        return this.readMem(addr);
+      }
+
+      setOverrideButtons(btns) {
+        this.overrideButtons = btns;
+        this.syncInput();
+      }
+
+      syncInput() {
+        const next = readControllerInputState(this.overrideButtons);
+        let mask = 0;
+        for (const [k, bit] of Object.entries(GBA_KEY_BITS)) {
+          if (next[k]) mask |= bit;
+        }
+        if (mask !== this.lastKeyMask) {
+          this.lastKeyMask = mask;
+          this.module._gba_set_keys(this.e, mask);
+        }
+      }
+
+      pushAudio(numFrames) {
+        if (this.speed !== 1 || !shouldOutputAudio() || numFrames <= 0) {
+          this.audioStageFrames = 0;
+          return;
+        }
+        const ctx = getAudioContext({ create: false });
+        if (!ctx || ctx.state !== 'running') {
+          this.audioStageFrames = 0;
+          return;
+        }
+        const ptr = this.module._gba_get_audio_buffer(this.e);
+        const heap16 = this.module.HEAP16;
+        const base = ptr >> 1;
+        const maxStage = this.audioStage.length >> 1;
+        let offset = 0;
+        while (offset < numFrames) {
+          const space = maxStage - this.audioStageFrames;
+          const chunk = Math.min(space, numFrames - offset);
+          for (let i = 0; i < chunk; i++) {
+            const srcIdx = base + (offset + i) * 2;
+            const dstIdx = (this.audioStageFrames + i) * 2;
+            this.audioStage[dstIdx] = heap16[srcIdx] / 65536;
+            this.audioStage[dstIdx + 1] = heap16[srcIdx + 1] / 65536;
+          }
+          this.audioStageFrames += chunk;
+          offset += chunk;
+          if (this.audioStageFrames >= GBA_AUDIO_STAGE_FRAMES) {
+            const count = this.audioStageFrames;
+            const stage = this.audioStage;
+            scheduleStereoAudioBuffer(this, count, (ch0, ch1) => {
+              for (let i = 0; i < count; i++) {
+                ch0[i] = stage[i * 2];
+                ch1[i] = stage[i * 2 + 1];
+              }
+            });
+            this.audioStageFrames = 0;
+          }
+        }
+      }
+
+      captureFrame() {
+        const ptr = this.module._gba_get_frame_buffer(this.e);
+        const fb = new Uint8Array(this.module.HEAP8.buffer, ptr, GBA_WIDTH * GBA_HEIGHT * 4);
+        this.imageData.data.set(fb);
+      }
+
+      presentFrame() {
+        this.ctx.putImageData(this.imageData, 0, 0);
+      }
+
+      renderFrame() {
+        this.captureFrame();
+        this.presentFrame();
+      }
+
+      stepFrame = (ms) => {
+        if (this.destroyed || this.rafId === 0) return;
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+          this.lastMs = 0;
+        }
+        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
+        this.syncInput();
+
+        const deltaSec = Math.min(Math.max((ms - (this.lastMs || ms)) / 1000, 0), MAX_UPDATE_SEC);
+        this.lastMs = ms;
+        this.accumSec += deltaSec * this.speed;
+
+        const maxFrames = this.speed > 1 ? 64 : 4;
+        const deadlineMs = this.speed > 1 ? performance.now() + MAX_TURBO_STEP_MS : Infinity;
+        let ran = 0;
+        let hasNewFrame = false;
+
+        while (this.accumSec >= GBA_FRAME_SEC && ran < maxFrames) {
+          this.accumSec -= GBA_FRAME_SEC;
+          const audioFrames = this.module._gba_run_frame(this.e);
+          ran += 1;
+          this.captureFrame();
+          hasNewFrame = true;
+          this.pushAudio(audioFrames);
+          this.onFrame?.();
+          if (this.destroyed || this.rafId === 0) break;
+          if (performance.now() >= deadlineMs) {
+            this.accumSec = 0;
+            break;
+          }
+        }
+        if (this.destroyed) return;
+        if (hasNewFrame) this.presentFrame();
+
+        const curSram = this.sramSize;
+        if (curSram !== this.lastKnownSramSize) {
+          this.lastKnownSramSize = curSram;
+          this.onSramSizeChange?.();
+        }
+        if (this.module._gba_was_save_updated(this.e)) {
+          this.onExtRamUpdated?.();
+        }
+      };
+
+      resume() {
+        if (this.destroyed || this.rafId !== 0) return;
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+        }
+        this.lastMs = 0;
+        this.audioStartSec = 0;
+        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
+        resumeAudioSafely();
+        requestWakeLock();
+      }
+
+      pause() {
+        if (this.rafId !== 0) {
+          if (!this.rafWindow.closed) {
+            this.rafWindow.cancelAnimationFrame(this.rafId);
+          }
+          this.rafId = 0;
+        }
+        if (this.rafWindow !== window && this.rafWindow.closed) {
+          this.rafWindow = window;
+          this.lastMs = 0;
+        }
+        this.lastMs = 0;
+        this.accumSec = 0;
+        this.audioStageFrames = 0;
+        stopScheduledAudio();
+        this.audioStartSec = 0;
+        if (audioCtx && audioCtx.state === 'running') {
+          audioCtx.suspend().catch(() => {});
+        }
+        releaseWakeLock();
+      }
+
+      destroy() {
+        if (this.destroyed) return;
+        this.pause();
+        this.destroyed = true;
+        if (this.e) {
+          this.module._gba_destroy(this.e);
+          this.e = 0;
         }
       }
     }
@@ -1643,6 +2110,12 @@
         --text: #e2e8f0;
         --muted: #94a3b8;
         --accent: #38bdf8;
+        --screen-w: 160;
+        --screen-h: 144;
+      }
+      body.gba-mode {
+        --screen-w: 240;
+        --screen-h: 160;
       }
       *, *::before, *::after {
         box-sizing: border-box;
@@ -1677,9 +2150,9 @@
         container-type: size;
       }
       .pip-stage #screen {
-        width: min(100cqw, calc(100cqh * 160 / 144));
-        height: min(100cqh, calc(100cqw * 144 / 160));
-        aspect-ratio: 160 / 144;
+        width: min(100cqw, calc(100cqh * var(--screen-w) / var(--screen-h)));
+        height: min(100cqh, calc(100cqw * var(--screen-h) / var(--screen-w)));
+        aspect-ratio: var(--screen-w) / var(--screen-h);
         image-rendering: pixelated;
         background: #0f172a;
         border: 1px solid var(--border);
@@ -1878,6 +2351,7 @@
         statusBox.append(statusPrimaryEl, statusHealEl);
 
         root.append(stage, controls, statusBox);
+        doc.body.classList.toggle('gba-mode', document.body.classList.contains('gba-mode'));
         doc.body.replaceChildren(root);
 
         pipPlaceholderEl.hidden = false;
@@ -1990,6 +2464,23 @@
       }
     }
 
+    async function createEmulatorInstance(platform, romBytes, sramBytes) {
+      const commonOpts = {
+        onExtRamUpdated: scheduleSramFlush,
+        onSramSizeChange: setActionButtonsDisabled,
+        onFrame: onEmulatorFrame,
+        speed: currentSpeed,
+        animationWindow: getActiveAnimationWindow(),
+      };
+      if (platform === 'gba') {
+        const mgba = await ensureMgba();
+        syncScreenGeometry(GBA_WIDTH, GBA_HEIGHT);
+        return new MgbaEmulator(mgba, romBytes, sramBytes, canvas, commonOpts);
+      }
+      syncScreenGeometry(SCREEN_WIDTH, SCREEN_HEIGHT);
+      return new BinjgbEmulator(binjgb, romBytes, sramBytes, canvas, commonOpts);
+    }
+
     async function loadRom(romSource, fileName, { persist = false, restoreAutoFight = false } = {}) {
       if (!romSource || isBusy) return;
       const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
@@ -2002,7 +2493,7 @@
       try {
         resumeAudioSafely();
         if (String(label).toLowerCase().endsWith('.zip')) {
-          throw new Error('Please unzip the .gb / .gbc file first');
+          throw new Error('Please unzip the .gb / .gbc / .gba file first');
         }
 
         let romBytes;
@@ -2011,7 +2502,7 @@
         } else if (romSource instanceof Blob) {
           romBytes = new Uint8Array(await romSource.arrayBuffer());
         } else {
-          throw new Error('Unsupported ROM source; provide a local .gb / .gbc file');
+          throw new Error('Unsupported ROM source; provide a local .gb / .gbc / .gba file');
         }
 
         stopAutoFight(null, { preservePreference: restoreAutoFight });
@@ -2026,12 +2517,15 @@
         }
         currentAutoFightProfile = null;
 
-        const header = parseRomHeader(romBytes);
+        const header = parseRomHeader(romBytes, label);
+        const platform = header?.platform || detectRomPlatform(romBytes, label);
         currentRomBytes = romBytes;
+        currentRomPlatform = platform;
         currentRomId = crc32Hex(romBytes);
         currentRomTitle = header ? header.title : label;
+        currentRomGameCode = header?.gameCode || '';
         currentHeaderText = header ? `${header.title} (${header.mbc})` : label;
-        currentAutoFightProfile = getAutoFightProfile(currentRomTitle);
+        currentAutoFightProfile = getAutoFightProfile(currentRomTitle, currentRomGameCode);
 
         const [sram, autoState, manualState, savedTrail] = await Promise.all([
           dbGet(`sram:${currentRomId}`),
@@ -2041,12 +2535,7 @@
         ]);
         hasManualSave = Boolean(manualState);
 
-        emu = new BinjgbEmulator(binjgb, romBytes, sram, canvas, {
-          onExtRamUpdated: scheduleSramFlush,
-          onFrame: onEmulatorFrame,
-          speed: currentSpeed,
-          animationWindow: getActiveAnimationWindow(),
-        });
+        emu = await createEmulatorInstance(platform, romBytes, sram);
 
         if (autoState && emu.loadState(autoState)) {
           loadStatusSuffix = ' — resumed auto-save';
@@ -2061,7 +2550,10 @@
           await dbPut(LAST_ROM_KEY, { bytes: romBytes, name: label, savedAt: Date.now() });
         }
       } catch (err) {
-        if (!emu) currentAutoFightProfile = null;
+        if (!emu) {
+          currentAutoFightProfile = null;
+          syncScreenGeometry(SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
         console.error(err);
         statusEl.textContent = `Failed to load ROM: ${err?.message || err}`;
       } finally {
@@ -2135,12 +2627,7 @@
       await dbDelete(`pokeTrail:${currentRomId}`);
       clearPendingUnloadFor(currentRomId);
       emu.destroy();
-      emu = new BinjgbEmulator(binjgb, currentRomBytes, sramBytes, canvas, {
-        onExtRamUpdated: scheduleSramFlush,
-        onFrame: onEmulatorFrame,
-        speed: currentSpeed,
-        animationWindow: getActiveAnimationWindow(),
-      });
+      emu = await createEmulatorInstance(currentRomPlatform, currentRomBytes, sramBytes);
       emu.resume();
     }
 

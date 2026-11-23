@@ -9,7 +9,7 @@ export const NEUTRAL_BUTTONS = Object.freeze({
   select: false,
 });
 
-// Non-damaging, flee, self-KO, or conditional-fail Gen 1 & Gen 2 move IDs.
+// Non-damaging, flee, self-KO, or conditional-fail Gen 1, Gen 2, & Gen 3 move IDs.
 export const NON_ATTACK_MOVES = new Set([
   14, 18, 28, 39, 43, 45, 46, 47, 48, 50, 54, 73, 74, 77, 78, 79, 81, 86, 92,
   95, 96, 97, 100, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113,
@@ -18,9 +18,13 @@ export const NON_ATTACK_MOVES = new Set([
   166, 169, 170, 171, 173, 174, 176, 178, 180, 182, 184, 186, 187, 191, 193,
   194, 195, 197, 199, 201, 203, 204, 206, 207, 208, 212, 213, 214, 215, 219,
   220, 226, 227, 230, 234, 235, 236, 240, 241, 243, 244,
+  252, 254, 255, 256, 258, 259, 260, 261, 262, 264, 266, 267, 268, 269, 270,
+  271, 272, 273, 274, 275, 277, 278, 281, 283, 285, 286, 287, 288, 289, 293,
+  294, 297, 298, 300, 303, 312, 313, 316, 319, 320, 321, 322, 334, 335, 336,
+  339, 346, 347, 349,
 ]);
 
-const LEARN_PROMPT_RE = /\blearn|trying to|Delete an|forgotten/;
+const LEARN_PROMPT_RE = /\blearn|trying to|Delete an?|forgotten/;
 const DIRS = ['right', 'left', 'up', 'down'];
 const TILE_CURSOR = 0xed;
 const MOVE_FIRST_ROW = 13;
@@ -72,7 +76,61 @@ export const POKEMON_CRYSTAL_MEM = Object.freeze({
   partyMon1: 0xdcdf,        // WRAM1: wPartyMon1 (party_struct, stride 0x30)
 });
 
+export const POKEMON_EMERALD_MEM = Object.freeze({
+  gMain: 0x030022c0,
+  gSaveBlock1Ptr: 0x03005d8c,
+  gSaveBlock2Ptr: 0x03005d90,
+  gMapHeader: 0x02037318,
+  gObjectEvents: 0x02037350,
+  gPlayerAvatar: 0x02037590,
+  gPlayerPartyCount: 0x020244e9,
+  gPlayerParty: 0x020244ec,
+  gBattleTypeFlags: 0x02022fec,
+  gBattleOutcome: 0x0202433a,
+  gBattleMons: 0x02024084,
+  gBattlerControllerFuncs: 0x03005d60,
+  gActionSelectionCursor: 0x020244ac,
+  gMoveSelectionCursor: 0x020244b0,
+  gBattlescriptCurrInstr: 0x02024214,
+  gDisplayedStringBattle: 0x02022e2c,
+  gStringVar4: 0x02021fc4,
+  handleInputChooseAction: 0x08057588,
+  handleInputChooseMove: 0x08057bfc,
+  cb2WhiteOut: 0x08085f58,
+  cb2InitLearnMove: 0x081606a0,
+  cb2EvolutionSceneStart: 0x0813d9b0,
+  cb2EvolutionSceneLoad: 0x0813dd7c,
+  cb2EvolutionSceneUpdate: 0x0813e3a4,
+  battleScriptAskToLearnMoveStart: 0x082dabe3,
+  battleScriptAskToLearnMoveEnd: 0x082dac2b,
+});
+
 const CRYSTAL_EGG_SPECIES = 0xfd;
+
+const EMERALD_NON_AUTO_BATTLE_MASK =
+  (1 << 0) | // BATTLE_TYPE_DOUBLE
+  (1 << 1) | // BATTLE_TYPE_LINK
+  (1 << 3) | // BATTLE_TYPE_TRAINER
+  (1 << 7) | // BATTLE_TYPE_SAFARI
+  (1 << 9);  // BATTLE_TYPE_WALLY_TUTORIAL
+
+const EMERALD_DIR_TO_FACING = Object.freeze({
+  1: 0x00, // DIR_SOUTH
+  2: 0x04, // DIR_NORTH
+  3: 0x08, // DIR_WEST
+  4: 0x0c, // DIR_EAST
+});
+
+const EMERALD_SUBSTRUCT_SLOTS = Object.freeze([
+  [0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 1, 3], [0, 3, 1, 2], [0, 2, 3, 1], [0, 3, 2, 1],
+  [1, 0, 2, 3], [1, 0, 3, 2], [2, 0, 1, 3], [3, 0, 1, 2], [2, 0, 3, 1], [3, 0, 2, 1],
+  [1, 2, 0, 3], [1, 3, 0, 2], [2, 1, 0, 3], [3, 1, 0, 2], [2, 3, 0, 1], [3, 2, 0, 1],
+  [1, 2, 3, 0], [1, 3, 2, 0], [2, 1, 3, 0], [3, 1, 2, 0], [2, 3, 1, 0], [3, 2, 1, 0],
+]);
+
+const EMERALD_EXT_CTRL_ARG_LEN = Object.freeze([
+  0, 1, 1, 1, 3, 1, 1, 0, 1, 0, 0, 2, 1, 1, 1, 0, 2, 1, 1, 1, 1, 0, 0, 0, 0,
+]);
 
 const STANDARD_POKECENTER_CONFIG = Object.freeze({
   standX: 3,
@@ -156,9 +214,61 @@ export const CRYSTAL_POKECENTER_CONFIGS = Object.freeze({
   [encodeCrystalMapId(26, 5)]: makeCrystalStandardPokeCenter('Cherrygrove Heal Center'),
 });
 
+export function encodeEmeraldMapId(mapGroup, mapNumber) {
+  return 0x10000 | ((mapGroup & 0xff) << 8) | (mapNumber & 0xff);
+}
+
+const EMERALD_STANDARD_POKECENTER_CONFIG = Object.freeze({
+  standX: 7,
+  standY: 4,
+  exitX: 7,
+  exitY: 8,
+  tileset: 61, // LAYOUT_POKEMON_CENTER_1F
+});
+
+function makeEmeraldStandardPokeCenter(name) {
+  return Object.freeze({ ...EMERALD_STANDARD_POKECENTER_CONFIG, name });
+}
+
+export const EMERALD_POKECENTER_CONFIGS = Object.freeze({
+  [encodeEmeraldMapId(2, 2)]: makeEmeraldStandardPokeCenter('Oldale Heal Center'),
+  [encodeEmeraldMapId(3, 1)]: makeEmeraldStandardPokeCenter('Dewford Heal Center'),
+  [encodeEmeraldMapId(4, 5)]: Object.freeze({
+    standX: 7,
+    standY: 4,
+    exitX: 7,
+    exitY: 8,
+    tileset: 71, // LAYOUT_LAVARIDGE_TOWN_POKEMON_CENTER_1F
+    name: 'Lavaridge Heal Center',
+  }),
+  [encodeEmeraldMapId(5, 4)]: makeEmeraldStandardPokeCenter('Fallarbor Heal Center'),
+  [encodeEmeraldMapId(6, 4)]: makeEmeraldStandardPokeCenter('Verdanturf Heal Center'),
+  [encodeEmeraldMapId(7, 0)]: makeEmeraldStandardPokeCenter('Pacifidlog Heal Center'),
+  [encodeEmeraldMapId(8, 4)]: makeEmeraldStandardPokeCenter('Petalburg Heal Center'),
+  [encodeEmeraldMapId(9, 11)]: makeEmeraldStandardPokeCenter('Slateport Heal Center'),
+  [encodeEmeraldMapId(10, 5)]: makeEmeraldStandardPokeCenter('Mauville Heal Center'),
+  [encodeEmeraldMapId(11, 5)]: makeEmeraldStandardPokeCenter('Rustboro Heal Center'),
+  [encodeEmeraldMapId(12, 2)]: makeEmeraldStandardPokeCenter('Fortree Heal Center'),
+  [encodeEmeraldMapId(13, 6)]: makeEmeraldStandardPokeCenter('Lilycove Heal Center'),
+  [encodeEmeraldMapId(14, 3)]: makeEmeraldStandardPokeCenter('Mossdeep Heal Center'),
+  [encodeEmeraldMapId(15, 2)]: makeEmeraldStandardPokeCenter('Sootopolis Heal Center'),
+  [encodeEmeraldMapId(16, 10)]: Object.freeze({
+    standX: 3,
+    standY: 4,
+    exitX: 9,
+    exitY: 11,
+    tileset: 270, // LAYOUT_EVER_GRANDE_CITY_POKEMON_LEAGUE_1F
+    yFirstToNurse: true,
+    name: 'Ever Grande League Heal Center',
+  }),
+  [encodeEmeraldMapId(16, 12)]: makeEmeraldStandardPokeCenter('Ever Grande Heal Center'),
+  [encodeEmeraldMapId(26, 53)]: makeEmeraldStandardPokeCenter('Battle Frontier Heal Center'),
+});
+
 const ALL_POKECENTER_CONFIGS = Object.freeze({
   ...POKECENTER_CONFIGS,
   ...CRYSTAL_POKECENTER_CONFIGS,
+  ...EMERALD_POKECENTER_CONFIGS,
 });
 
 const FACING_TO_DIR = Object.freeze({
@@ -191,10 +301,11 @@ export function isPokeCenterMap(mapId) {
   return Object.hasOwn(ALL_POKECENTER_CONFIGS, mapId);
 }
 
-export function pickAttackSlot(moves, pp) {
+export function pickAttackSlot(moves, pp, { maskPpUps = true } = {}) {
+  const ppMask = maskPpUps ? 0x3f : 0xff;
   for (let i = 0; i < 4; i++) {
     const moveId = moves[i] | 0;
-    const remPp = (pp[i] | 0) & 0x3f;
+    const remPp = (pp[i] | 0) & ppMask;
     if (moveId !== 0 && !NON_ATTACK_MOVES.has(moveId) && remPp > 0) {
       return i;
     }
@@ -423,6 +534,291 @@ export function readPokemonCrystalSnapshot(readMem, mem = POKEMON_CRYSTAL_MEM) {
   };
 }
 
+export function decodeGen3Char(byte) {
+  const b = byte & 0xff;
+  if (b >= 0xbb && b <= 0xd4) return String.fromCharCode(65 + b - 0xbb);
+  if (b >= 0xd5 && b <= 0xee) return String.fromCharCode(97 + b - 0xd5);
+  if (b >= 0xa1 && b <= 0xaa) return String.fromCharCode(48 + b - 0xa1);
+  if (b === 0x00 || b === 0xfa || b === 0xfb || b === 0xfe) return ' ';
+  if (b === 0xab) return '!';
+  if (b === 0xac) return '?';
+  if (b === 0xad) return '.';
+  if (b === 0xae) return '-';
+  if (b === 0xb8) return ',';
+  if (b === 0xba) return '/';
+  return ' ';
+}
+
+export function decodeGen3String(readMem, startAddr, maxLen = 160) {
+  let out = '';
+  let i = 0;
+  while (i < maxLen) {
+    const b = readMem(startAddr + i) & 0xff;
+    i += 1;
+    if (b === 0xff) break;
+    if (b === 0xfc) {
+      if (i >= maxLen) break;
+      const cmd = readMem(startAddr + i) & 0xff;
+      i += 1 + (EMERALD_EXT_CTRL_ARG_LEN[cmd] ?? 0);
+      continue;
+    }
+    if (b === 0xfd) {
+      i += 1;
+      out += ' ';
+      continue;
+    }
+    out += decodeGen3Char(b);
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+export function decryptEmeraldBoxMon(readMem, base) {
+  const r = (addr) => readMem(addr) & 0xff;
+  const r32 = (addr) =>
+    (r(addr) | (r(addr + 1) << 8) | (r(addr + 2) << 16) | (r(addr + 3) << 24)) >>> 0;
+
+  const personality = r32(base);
+  const otId = r32(base + 0x04);
+  const flags = r(base + 0x13);
+  const hasSpecies = Boolean((flags >> 1) & 1);
+  const isEgg = Boolean((flags >> 2) & 1);
+  if (!hasSpecies) {
+    return { species: 0, isEgg: false, moves: [0, 0, 0, 0], pp: [0, 0, 0, 0] };
+  }
+
+  const key = (personality ^ otId) >>> 0;
+  const order = EMERALD_SUBSTRUCT_SLOTS[personality % 24];
+  const readWord = (slot, wordIdx) =>
+    (r32(base + 0x20 + slot * 12 + wordIdx * 4) ^ key) >>> 0;
+
+  const growth0 = readWord(order[0], 0);
+  const species = growth0 & 0xffff;
+
+  const atk0 = readWord(order[1], 0);
+  const atk1 = readWord(order[1], 1);
+  const atk2 = readWord(order[1], 2);
+  return {
+    species,
+    isEgg,
+    moves: [
+      atk0 & 0xffff,
+      (atk0 >>> 16) & 0xffff,
+      atk1 & 0xffff,
+      (atk1 >>> 16) & 0xffff,
+    ],
+    pp: [
+      atk2 & 0xff,
+      (atk2 >>> 8) & 0xff,
+      (atk2 >>> 16) & 0xff,
+      (atk2 >>> 24) & 0xff,
+    ],
+  };
+}
+
+export function readPokemonEmeraldOverworldPos(readMem, mem = POKEMON_EMERALD_MEM) {
+  const r = (addr) => readMem(addr) & 0xff;
+  const r16 = (addr) => (r(addr) | (r(addr + 1) << 8)) & 0xffff;
+  const r16s = (addr) => {
+    const v = r16(addr);
+    return v & 0x8000 ? v - 0x10000 : v;
+  };
+  const r32 = (addr) =>
+    (r(addr) | (r(addr + 1) << 8) | (r(addr + 2) << 16) | (r(addr + 3) << 24)) >>> 0;
+
+  const cb2 = (r32(mem.gMain + 0x04) & ~1) >>> 0;
+  const inBattleFlag = Boolean((r(mem.gMain + 0x439) >> 1) & 1);
+  const battleTypeFlags = r32(mem.gBattleTypeFlags);
+  const battleOutcome = r(mem.gBattleOutcome);
+  const inCutscene =
+    cb2 === mem.cb2EvolutionSceneStart ||
+    cb2 === mem.cb2EvolutionSceneLoad ||
+    cb2 === mem.cb2EvolutionSceneUpdate;
+
+  let isInBattle = 0;
+  if (cb2 === mem.cb2WhiteOut || (inBattleFlag && battleOutcome === 2)) {
+    isInBattle = 0xff;
+  } else if (inBattleFlag) {
+    isInBattle = (battleTypeFlags & EMERALD_NON_AUTO_BATTLE_MASK) !== 0 ? 2 : 1;
+  }
+
+  const sb1 = r32(mem.gSaveBlock1Ptr);
+  if (sb1 < 0x02000000 || sb1 > 0x0203f000) {
+    return {
+      isInBattle,
+      inCutscene,
+      map: 0,
+      mapGroup: 0,
+      mapNumber: 0,
+      y: -1,
+      x: -1,
+      tileset: 0,
+      mapHeight: 0,
+      mapWidth: 0,
+      partyCount: 0,
+      facing: 0,
+    };
+  }
+
+  const mapGroup = r(sb1 + 0x04);
+  const mapNumber = r(sb1 + 0x05);
+  const map = encodeEmeraldMapId(mapGroup, mapNumber);
+  const tileset = r16(mem.gMapHeader + 0x12) || r16(sb1 + 0x32);
+
+  let mapWidth = 0;
+  let mapHeight = 0;
+  const layoutPtr = r32(mem.gMapHeader);
+  if (
+    (layoutPtr >= 0x08000000 && layoutPtr < 0x0a000000) ||
+    (layoutPtr >= 0x02000000 && layoutPtr <= 0x0203fff0)
+  ) {
+    const w = r32(layoutPtr) | 0;
+    const h = r32(layoutPtr + 4) | 0;
+    if (w > 0 && w <= 1024 && h > 0 && h <= 1024) {
+      mapWidth = w;
+      mapHeight = h;
+    }
+  }
+
+  let x = r16s(sb1 + 0x00);
+  let y = r16s(sb1 + 0x02);
+  let facing = 0x00;
+
+  const playerObjIdx = r(mem.gPlayerAvatar + 0x05);
+  if (playerObjIdx < 16) {
+    const objBase = mem.gObjectEvents + playerObjIdx * 0x24;
+    const activeObj = Boolean(r(objBase) & 0x01);
+    const isPlayer = Boolean(r(objBase + 0x02) & 0x01);
+    if (activeObj && isPlayer) {
+      const ox = r16s(objBase + 0x10) - 7;
+      const oy = r16s(objBase + 0x12) - 7;
+      if (ox >= 0 && oy >= 0) {
+        x = ox;
+        y = oy;
+      }
+      const dir = r(objBase + 0x18) & 0x0f;
+      facing = EMERALD_DIR_TO_FACING[dir] ?? facing;
+    }
+  }
+
+  return {
+    isInBattle,
+    inCutscene,
+    map,
+    mapGroup,
+    mapNumber,
+    y,
+    x,
+    tileset,
+    mapHeight,
+    mapWidth,
+    partyCount: Math.min(r(mem.gPlayerPartyCount), 6),
+    facing,
+  };
+}
+
+export function readPokemonEmeraldSnapshot(readMem, mem = POKEMON_EMERALD_MEM) {
+  const r = (addr) => readMem(addr) & 0xff;
+  const r16 = (addr) => (r(addr) | (r(addr + 1) << 8)) & 0xffff;
+  const r32 = (addr) =>
+    (r(addr) | (r(addr + 1) << 8) | (r(addr + 2) << 16) | (r(addr + 3) << 24)) >>> 0;
+
+  const pos = readPokemonEmeraldOverworldPos(readMem, mem);
+  const party = [];
+  for (let i = 0; i < pos.partyCount; i++) {
+    const base = mem.gPlayerParty + i * 0x64;
+    const box = decryptEmeraldBoxMon(readMem, base);
+    if (box.isEgg) {
+      party.push({
+        species: box.species,
+        isEgg: true,
+        hp: 0,
+        maxHp: 0,
+        level: 0,
+        moves: [0, 0, 0, 0],
+        pp: [0, 0, 0, 0],
+      });
+      continue;
+    }
+    party.push({
+      species: box.species,
+      isEgg: false,
+      hp: r16(base + 0x56),
+      maxHp: r16(base + 0x58),
+      level: r(base + 0x54),
+      moves: box.moves,
+      pp: box.pp,
+    });
+  }
+
+  const bBase = mem.gBattleMons;
+  const battleMon = {
+    species: r16(bBase),
+    moves: [r16(bBase + 0x0c), r16(bBase + 0x0e), r16(bBase + 0x10), r16(bBase + 0x12)],
+    pp: [r(bBase + 0x24), r(bBase + 0x25), r(bBase + 0x26), r(bBase + 0x27)],
+    hp: r16(bBase + 0x28),
+    level: r(bBase + 0x2a),
+    maxHp: r16(bBase + 0x2c),
+  };
+
+  const ctrlFunc = (r32(mem.gBattlerControllerFuncs) & ~1) >>> 0;
+  let fightPos = null;
+  let runPos = null;
+  let hasRun = false;
+  let cursorPos = null;
+  let hasTypeBox = false;
+  let moveGrid = false;
+  let moveCursor = 0;
+
+  if (pos.isInBattle === 1 && ctrlFunc === mem.handleInputChooseAction) {
+    const act = r(mem.gActionSelectionCursor) & 3;
+    fightPos = { row: 0, col: 1 };
+    runPos = { row: 1, col: 2 };
+    hasRun = true;
+    cursorPos = { row: (act >> 1) & 1, col: act & 1 };
+  } else if (pos.isInBattle === 1 && ctrlFunc === mem.handleInputChooseMove) {
+    hasTypeBox = true;
+    moveGrid = true;
+    moveCursor = r(mem.gMoveSelectionCursor) & 3;
+  }
+
+  const cb2 = (r32(mem.gMain + 0x04) & ~1) >>> 0;
+  const inLearnCb = cb2 === mem.cb2InitLearnMove;
+  const instr = r32(mem.gBattlescriptCurrInstr);
+  const inLearnScript =
+    pos.isInBattle === 1 &&
+    instr >= mem.battleScriptAskToLearnMoveStart &&
+    instr < mem.battleScriptAskToLearnMoveEnd;
+
+  const textParts = [];
+  if (pos.isInBattle === 1 || pos.inCutscene || inLearnCb) {
+    const battleText = decodeGen3String(r, mem.gDisplayedStringBattle, 160);
+    if (battleText) textParts.push(battleText);
+  }
+  if (pos.inCutscene || inLearnCb) {
+    const var4Text = decodeGen3String(r, mem.gStringVar4, 160);
+    if (var4Text) textParts.push(var4Text);
+  }
+  if (inLearnCb || inLearnScript) {
+    textParts.push('trying to learn');
+  }
+
+  return {
+    ...pos,
+    maskPpUps: false,
+    party,
+    battleMon,
+    hasTypeBox,
+    moveGrid,
+    moveCursor,
+    menuBoxRows: [],
+    menuBoxText: textParts.join(' '),
+    fightPos,
+    runPos,
+    hasRun,
+    cursorPos,
+  };
+}
+
 function makeGen1Profile(id, name, mem) {
   return Object.freeze({
     id,
@@ -442,24 +838,43 @@ const POKEMON_CRYSTAL_PROFILE = Object.freeze({
   readSnapshot: readPokemonCrystalSnapshot,
 });
 
+const POKEMON_EMERALD_PROFILE = Object.freeze({
+  id: 'pokemon-emerald',
+  name: 'Pokémon Emerald',
+  mem: POKEMON_EMERALD_MEM,
+  pokeCenterConfigs: EMERALD_POKECENTER_CONFIGS,
+  readOverworldPos: readPokemonEmeraldOverworldPos,
+  readSnapshot: readPokemonEmeraldSnapshot,
+});
+
 const AUTO_FIGHT_PROFILES = Object.freeze({
   'POKEMON RED': makeGen1Profile('pokemon-red-blue', 'Pokémon Red', POKEMON_RED_BLUE_MEM),
   'POKEMON BLUE': makeGen1Profile('pokemon-red-blue', 'Pokémon Blue', POKEMON_RED_BLUE_MEM),
   'POKEMON YELLOW': makeGen1Profile('pokemon-yellow', 'Pokémon Yellow', POKEMON_YELLOW_MEM),
   'PM_CRYSTAL': POKEMON_CRYSTAL_PROFILE,
   'POKEMON CRYSTAL': POKEMON_CRYSTAL_PROFILE,
+  'POKEMON EMER': POKEMON_EMERALD_PROFILE,
+  'POKEMON EMERALD': POKEMON_EMERALD_PROFILE,
 });
 
-export function getAutoFightProfile(title) {
-  const normalized = String(title || '').trim().toUpperCase();
-  return AUTO_FIGHT_PROFILES[normalized] ?? null;
+export function getAutoFightProfile(title, gameCode = '') {
+  const normalizedTitle = String(title || '').trim().toUpperCase();
+  const normalizedCode = String(gameCode || '').trim().toUpperCase();
+  const isEmeraldTitle =
+    normalizedTitle === 'POKEMON EMER' || normalizedTitle === 'POKEMON EMERALD';
+  if (isEmeraldTitle || normalizedCode === 'BPEE') {
+    if (normalizedCode && normalizedCode !== 'BPEE') return null;
+    return POKEMON_EMERALD_PROFILE;
+  }
+  return AUTO_FIGHT_PROFILES[normalizedTitle] ?? null;
 }
 
-function sumPartyPp(party) {
+function sumPartyPp(party, maskPpUps = true) {
+  const ppMask = maskPpUps ? 0x3f : 0xff;
   let total = 0;
   for (const mon of party) {
     for (let i = 0; i < 4; i++) {
-      total += (mon.pp[i] | 0) & 0x3f;
+      total += (mon.pp[i] | 0) & ppMask;
     }
   }
   return total;
@@ -491,8 +906,8 @@ function isLowHp(mon) {
 }
 
 /** Return the missing-path stop reason if a Pokemon needs healing (out of PP or low HP). */
-function getHealTriggerReason(mon) {
-  if (pickAttackSlot(mon.moves, mon.pp) === -1) {
+function getHealTriggerReason(mon, maskPpUps = true) {
+  if (pickAttackSlot(mon.moves, mon.pp, { maskPpUps }) === -1) {
     return OUT_OF_PP_MISSING_POKECENTER_REASON;
   }
   if (isLowHp(mon)) {
@@ -524,7 +939,7 @@ function steerSameMap(snap, target) {
 }
 
 function isValidOverworldCoord(snap) {
-  if (!snap || snap.x === 0xff || snap.y === 0xff) return false;
+  if (!snap || snap.x < 0 || snap.y < 0 || snap.x === 0xff || snap.y === 0xff) return false;
   if (snap.mapWidth > 0 && snap.x >= snap.mapWidth) return false;
   if (snap.mapHeight > 0 && snap.y >= snap.mapHeight) return false;
   return true;
@@ -865,12 +1280,13 @@ export function createAutoFight() {
   }
 
   function beginHealing(snap, party) {
+    const maskPpUps = snap.maskPpUps ?? true;
     wasInBattle = false;
     battleMonReady = false;
     phase = 'healing';
     travelMode = null;
     healSubphase = 'to_nurse';
-    healStartTotalPp = sumPartyPp(party);
+    healStartTotalPp = sumPartyPp(party, maskPpUps);
     healStartTotalHp = sumPartyHp(party);
     healFrames = 0;
     closeCycleFrame = 0;
@@ -897,6 +1313,7 @@ export function createAutoFight() {
   }
 
   function stepHealing(snap, party) {
+    const maskPpUps = snap.maskPpUps ?? true;
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
@@ -919,23 +1336,38 @@ export function createAutoFight() {
       if (snap.tileset !== undefined && snap.tileset !== cfg.tileset) {
         return neutral();
       }
-      if (snap.x > cfg.standX) {
-        return { active: true, buttons: { ...NEUTRAL_BUTTONS, left: true }, stopReason: null, phase };
-      }
-      if (snap.x < cfg.standX) {
-        return { active: true, buttons: { ...NEUTRAL_BUTTONS, right: true }, stopReason: null, phase };
-      }
-      if (snap.y > cfg.standY) {
-        return { active: true, buttons: { ...NEUTRAL_BUTTONS, up: true }, stopReason: null, phase };
-      }
-      if (snap.y < cfg.standY) {
-        return { active: true, buttons: { ...NEUTRAL_BUTTONS, down: true }, stopReason: null, phase };
+      if (cfg.yFirstToNurse) {
+        if (snap.y > cfg.standY) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, up: true }, stopReason: null, phase };
+        }
+        if (snap.y < cfg.standY) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, down: true }, stopReason: null, phase };
+        }
+        if (snap.x > cfg.standX) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, left: true }, stopReason: null, phase };
+        }
+        if (snap.x < cfg.standX) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, right: true }, stopReason: null, phase };
+        }
+      } else {
+        if (snap.x > cfg.standX) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, left: true }, stopReason: null, phase };
+        }
+        if (snap.x < cfg.standX) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, right: true }, stopReason: null, phase };
+        }
+        if (snap.y > cfg.standY) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, up: true }, stopReason: null, phase };
+        }
+        if (snap.y < cfg.standY) {
+          return { active: true, buttons: { ...NEUTRAL_BUTTONS, down: true }, stopReason: null, phase };
+        }
       }
       if (snap.facing != null && snap.facing !== 0x04) {
         return startPulse('up', 3, 6);
       }
       healSubphase = 'talking_nurse';
-      healStartTotalPp = sumPartyPp(party);
+      healStartTotalPp = sumPartyPp(party, maskPpUps);
       healStartTotalHp = sumPartyHp(party);
       healFrames = 0;
       return startPulse('a', 3, 10);
@@ -943,8 +1375,8 @@ export function createAutoFight() {
 
     if (healSubphase === 'talking_nurse') {
       const allFullHp = isPartyAllFullHp(party);
-      const hasAttackPp = pickAttackSlot(lead.moves, lead.pp) !== -1;
-      const curPp = sumPartyPp(party);
+      const hasAttackPp = pickAttackSlot(lead.moves, lead.pp, { maskPpUps }) !== -1;
+      const curPp = sumPartyPp(party, maskPpUps);
       const curHp = sumPartyHp(party);
       if (allFullHp && hasAttackPp && (curPp > healStartTotalPp || curHp > healStartTotalHp)) {
         healSubphase = 'closing_dialogue';
@@ -1101,11 +1533,12 @@ export function createAutoFight() {
   }
 
   function stepMoving(snap, party) {
+    const maskPpUps = snap.maskPpUps ?? true;
     const lead = party.find((m) => !m.isEgg && m.hp > 0);
     if (!lead) {
       return stop('fainted');
     }
-    const healReason = getHealTriggerReason(lead);
+    const healReason = getHealTriggerReason(lead, maskPpUps);
     if (healReason) {
       if (hasHealPath(anchor.map)) {
         beginReturning(snap);
@@ -1176,6 +1609,7 @@ export function createAutoFight() {
       return stop('learning a move');
     }
 
+    const maskPpUps = snap.maskPpUps ?? true;
     const party = snap.party || [];
 
     // 2. Blackout or trainer battle handling.
@@ -1186,8 +1620,13 @@ export function createAutoFight() {
       return stop('trainer battle');
     }
 
-    // 3. Overworld phases.
+    // 3. Overworld / post-battle evolution cutscenes.
     if (snap.isInBattle === 0) {
+      if (snap.inCutscene) {
+        const activePulse = tickPulseAndCooldown();
+        if (activePulse) return activePulse;
+        return startPulse('a', 3, 12);
+      }
       if (wasInBattle) {
         wasInBattle = false;
         battleMonReady = false;
@@ -1254,7 +1693,7 @@ export function createAutoFight() {
         return startPulse('b', 3, 10);
       }
       if (!battleMonReady) return neutral();
-      const healReason = getHealTriggerReason(snap.battleMon);
+      const healReason = getHealTriggerReason(snap.battleMon, maskPpUps);
       if (healReason) {
         if (hasHealPath(anchor.map)) {
           beginFleeing('returning');
@@ -1262,7 +1701,19 @@ export function createAutoFight() {
         }
         return stop(healReason);
       }
-      const targetSlot = pickAttackSlot(snap.battleMon.moves, snap.battleMon.pp);
+      const targetSlot = pickAttackSlot(snap.battleMon.moves, snap.battleMon.pp, { maskPpUps });
+      if (snap.moveGrid) {
+        const curSlot = (snap.moveCursor ?? 0) & 3;
+        const curRow = (curSlot >> 1) & 1;
+        const curCol = curSlot & 1;
+        const tgtRow = (targetSlot >> 1) & 1;
+        const tgtCol = targetSlot & 1;
+        if (curRow > tgtRow) return startPulse('up', 3, 6);
+        if (curCol > tgtCol) return startPulse('left', 3, 6);
+        if (curRow < tgtRow) return startPulse('down', 3, 6);
+        if (curCol < tgtCol) return startPulse('right', 3, 6);
+        return startPulse('a', 3, 12);
+      }
       if (!snap.cursorPos) return neutral();
       const currentSlot = snap.cursorPos.row - (snap.moveFirstRow ?? MOVE_FIRST_ROW);
       if (currentSlot < 0 || currentSlot > 3) return neutral();
@@ -1277,7 +1728,7 @@ export function createAutoFight() {
         return stepFleeMainMenu(snap);
       }
       if (!battleMonReady) return neutral();
-      const healReason = getHealTriggerReason(snap.battleMon);
+      const healReason = getHealTriggerReason(snap.battleMon, maskPpUps);
       if (healReason) {
         if (hasHealPath(anchor.map)) {
           beginFleeing('returning');

@@ -1,6 +1,6 @@
 # retro-idle
 
-Browser Game Boy / Game Boy Color emulator with built-in idle automation — play the fun parts, auto-grind the rest.
+Browser Game Boy, Game Boy Color, and Game Boy Advance emulator with built-in idle automation — play the fun parts, auto-grind the rest.
 
 **Live demo:** <https://kssilveira.github.io/retro-idle/>
 
@@ -10,25 +10,18 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 
 ## Features
 
-- **Zero-build browser GB/GBC emulator** ([index.html](index.html)) powered by vendored MIT-licensed `binjgb` WASM.
-- **ROM loading & auto-resume:** Load `.gb` / `.gbc` files via file picker or full-page drag-and-drop. Your last ROM, auto-save state, and battery SRAM persist locally in `IndexedDB`.
-- **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators.
+- **Zero-build browser GB/GBC & GBA emulator** ([index.html](index.html)) powered by vendored MIT-licensed `binjgb` WASM (GB/GBC) and single-threaded MPL-2.0 `mGBA` WASM using its built-in open-source HLE BIOS (GBA).
+- **ROM loading & auto-resume:** Load `.gb`, `.gbc`, or `.gba` files via file picker or full-page drag-and-drop. Your last ROM, auto-save state, and battery SRAM / Flash saves persist locally in `IndexedDB`.
+- **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators (32 KB GB/GBC SRAM and GBA SRAM / 128 KB Flash).
 - **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
 - **Default-muted audio:** Emulator audio starts muted by default (`Unmute` / `Mute` button in the main controls and Mini-Player, or `M` hotkey, persisted across refreshes).
-- **Mobile & touch support:** Automatically displays multi-touch Game Boy controls (thumb-slide D-Pad, B/A, Start/Select) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
+- **Mobile & touch support:** Automatically displays multi-touch controls (thumb-slide D-Pad, B/A, Start/Select, plus L/R shoulder buttons in GBA mode) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
 - **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, speed, and mute controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
-- **Pokémon Red / Blue / Yellow / Crystal Auto-Fight** ([autofight.js](autofight.js)):
-  - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW`, or Pokémon Crystal (`PM_CRYSTAL`) ROM is loaded.
+- **Pokémon Red / Blue / Yellow / Crystal / Emerald Auto-Fight** ([autofight.js](autofight.js)):
+  - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW`, Pokémon Crystal (`PM_CRYSTAL`), or English Pokémon Emerald (`POKEMON EMER` / `BPEE`) ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl or False Swipe).
   - **Automatic Heal Center heal-and-return:** Passively records a loop-pruned path from the most recently visited Heal Center (shown live below the Auto-Fight status when visited and how many steps are active). When out of PP or low on HP (`<= 30%`), Auto-Fight flees wild battles, walks back to heal with the healer, returns to your grinding spot, and resumes fighting.
-  - Automatically stops and releases all buttons on **out of PP or low HP without a visited Heal Center** (`missing Heal Center path`), **fainting** (`fainted`), **blocked path / one-way ledge** (prompting you to use a returnable path next time), **learning a move**, entering a **trainer battle**, or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
-
-## Roadmap
-
-- [x] **Pokémon Red / Blue** (GB) — Auto-Fight & automatic Heal Center round-trip
-- [x] **Pokémon Yellow** (GB / GBC) — Auto-Fight & automatic Heal Center round-trip
-- [x] **Pokémon Crystal** (GBC) — Auto-Fight & automatic Heal Center round-trip
-- [ ] **Pokémon Emerald** (GBA) — GBA WASM core (e.g. `mGBA` using built-in open-source HLE BIOS; no copyrighted BIOS dump), Auto-Fight & automatic Heal Center round-trip
+  - Automatically stops and releases all buttons on **out of PP or low HP without a visited Heal Center** (`missing Heal Center path`), **fainting** (`fainted`), **blocked path / one-way ledge** (prompting you to use a returnable path next time), **learning a move**, entering a **trainer battle** (or double/Safari/tutorial battle in Emerald), or **unexpected map change** (or when you press `Escape` or click **Stop Auto-Fight**).
 
 ## Controls
 
@@ -36,6 +29,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 | :--- | :--- |
 | D-Pad | `Arrow Keys` or `WASD` |
 | A / B | `X` / `Z` |
+| L / R (GBA) | `Q` / `E` |
 | Start / Select | `Enter` / `Shift` or `Tab` |
 | Speed (1x–20x) | `1`–`5` |
 | Mute / Unmute | `M` |
@@ -62,5 +56,5 @@ node tests/verify.mjs
 
 ## Copyright Notice
 
-- **No copyrighted ROMs, BIOS dumps, or game assets are included.** Bring your own legally obtained `.gb` / `.gbc` ROMs; everything runs 100% client-side in your browser.
+- **No copyrighted ROMs, BIOS dumps, or game assets are included.** Bring your own legally obtained `.gb`, `.gbc`, or `.gba` ROMs (GBA runs on `mGBA`'s built-in open-source HLE BIOS); everything runs 100% client-side in your browser.
 - **Not affiliated with or endorsed by Nintendo, Creatures, or Game Freak.** Game Boy, Game Boy Color, Game Boy Advance, and Pokémon are trademarks of their respective owners and are mentioned solely to describe compatibility.

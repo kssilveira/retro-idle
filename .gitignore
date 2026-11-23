@@ -1,6 +1,7 @@
 tests/.tmp/
 *.gb
 *.gbc
+*.gba
 *.sav
 node_modules/
 dist/
