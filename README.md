@@ -14,8 +14,9 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - **ROM loading & auto-resume:** Load `.gb` / `.gbc` files via file picker, full-page drag-and-drop, or `?rom=<url>`. Your last ROM, auto-save state, and battery SRAM persist locally in `IndexedDB`.
 - **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators.
 - **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
+- **Default-muted audio:** Emulator audio starts muted by default (`Unmute` / `Mute` button in the main controls and Mini-Player, or `M` hotkey, persisted across refreshes).
 - **Mobile & touch support:** Automatically displays multi-touch Game Boy controls (thumb-slide D-Pad, B/A, Start/Select) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
-- **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, and speed controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
+- **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, speed, and mute controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
 - **Pokémon Red / Blue / Yellow / Crystal Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW`, or Pokémon Crystal (`PM_CRYSTAL`) ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl or False Swipe).
@@ -37,6 +38,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 | A / B | `X` / `Z` |
 | Start / Select | `Enter` / `Shift` or `Tab` |
 | Speed (1x–20x) | `1`–`5` |
+| Mute / Unmute | `M` |
 | Stop Auto-Fight | `Escape` |
 | Gamepad | Standard Gamepad API mapping |
 

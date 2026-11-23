@@ -1304,6 +1304,7 @@ async function main() {
     'google-chrome',
     [
       '--headless=new',
+      '--mute-audio',
       '--no-sandbox',
       '--disable-gpu',
       `--remote-debugging-port=${CDP_PORT}`,

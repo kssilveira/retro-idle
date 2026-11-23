@@ -603,6 +603,7 @@
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
       <button type="button" id="auto-fight-btn" aria-pressed="false" disabled title="Pokémon Red / Blue / Yellow / Crystal">Auto-Fight</button>
+      <button type="button" id="mute-btn" class="active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen Game Boy controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
@@ -649,6 +650,7 @@
       Start: <kbd>Enter</kbd> &middot;
       Select: <kbd>Shift</kbd> &middot;
       Speed: <kbd>1</kbd>&ndash;<kbd>5</kbd> &middot;
+      Mute: <kbd>M</kbd> &middot;
       Gamepad supported
     </p>
   </main>
@@ -663,6 +665,7 @@
     const SCREEN_WIDTH = 160;
     const SCREEN_HEIGHT = 144;
     const AUDIO_FRAMES = 4096;
+    const DEFAULT_AUDIO_SAMPLE_RATE = 44100;
     const AUDIO_LATENCY_SEC = 0.1;
     const MAX_UPDATE_SEC = 5 / 60;
     const MAX_TURBO_STEP_MS = 12;
@@ -746,6 +749,7 @@
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
+    const muteBtn = document.getElementById('mute-btn');
     const touchPadBtn = document.getElementById('touch-pad-btn');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
     const touchGamepadEl = document.getElementById('touch-gamepad');
@@ -770,6 +774,8 @@
     let binjgb;
     let audioCtx = null;
     let audioGain = null;
+    let isMuted = true;
+    const activeAudioSources = new Set();
     let emu = null;
     let currentSpeed = 1;
     let currentRomBytes = null;
@@ -827,13 +833,31 @@
       return isMiniPlayerOpen() ? pipWindow : window;
     }
 
-    function getAudioContext() {
-      if (!audioCtx) {
+    function shouldOutputAudio() {
+      return !isMuted && currentSpeed === 1;
+    }
+
+    function stopScheduledAudio() {
+      for (const src of activeAudioSources) {
+        try {
+          src.onended = null;
+          src.stop();
+          src.disconnect();
+        } catch {}
+      }
+      activeAudioSources.clear();
+      if (emu) {
+        emu.audioStartSec = 0;
+      }
+    }
+
+    function getAudioContext({ create = true } = {}) {
+      if (!audioCtx && create) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
         if (Ctor) {
           audioCtx = new Ctor();
           audioGain = audioCtx.createGain();
-          audioGain.gain.value = currentSpeed === 1 ? 1 : 0;
+          audioGain.gain.value = shouldOutputAudio() ? 1 : 0;
           audioGain.connect(audioCtx.destination);
         }
       }
@@ -841,13 +865,26 @@
     }
 
     function syncAudioGain() {
-      if (audioCtx && audioGain) {
-        audioGain.gain.setValueAtTime(currentSpeed === 1 ? 1 : 0, audioCtx.currentTime);
+      if (!audioCtx || !audioGain) return;
+      const audible = shouldOutputAudio();
+      audioGain.gain.value = audible ? 1 : 0;
+      if (!audible) {
+        stopScheduledAudio();
+      }
+      if (isMuted && audioCtx.state === 'running') {
+        audioCtx.suspend().catch(() => {});
+      } else if (!isMuted && emu?.isPlaying && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
       }
     }
 
     function resumeAudioSafely() {
-      const ctx = getAudioContext();
+      if (isMuted) return;
+      if (emu && !emu.isPlaying) return;
+      const ctx = getAudioContext({ create: true });
+      if (audioGain) {
+        audioGain.gain.value = shouldOutputAudio() ? 1 : 0;
+      }
       if (ctx && ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
@@ -961,8 +998,8 @@
         new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).fill(0);
         new Uint8Array(module.HEAP8.buffer, this.romPtr, alignedSize).set(romBytes);
 
-        const sampleRate = getAudioContext()?.sampleRate || 44100;
-        this.e = module._emulator_new_simple(this.romPtr, alignedSize, sampleRate, AUDIO_FRAMES, 2);
+        this.audioSampleRate = audioCtx?.sampleRate || DEFAULT_AUDIO_SAMPLE_RATE;
+        this.e = module._emulator_new_simple(this.romPtr, alignedSize, this.audioSampleRate, AUDIO_FRAMES, 2);
         if (this.e === 0) {
           module._free(this.romPtr);
           this.romPtr = 0;
@@ -1034,6 +1071,7 @@
           buf.set(stateBytes);
           this.module._emulator_read_state(this.e, ptr);
           this.leftoverTicks = 0;
+          stopScheduledAudio();
           this.audioStartSec = 0;
           return true;
         });
@@ -1048,6 +1086,7 @@
         if (!Number.isFinite(next) || next <= 0 || next === this.speed) return;
         this.speed = next;
         this.leftoverTicks = 0;
+        stopScheduledAudio();
         this.audioStartSec = 0;
       }
 
@@ -1150,8 +1189,8 @@
       }
 
       pushAudio() {
-        if (this.speed !== 1) return;
-        const ctx = getAudioContext();
+        if (this.speed !== 1 || !shouldOutputAudio()) return;
+        const ctx = getAudioContext({ create: false });
         if (!ctx || ctx.state !== 'running') return;
         const ptr = this.module._get_audio_buffer_ptr(this.e);
         const cap = this.module._get_audio_buffer_capacity(this.e);
@@ -1160,7 +1199,7 @@
         const nowPlusLatency = nowSec + AUDIO_LATENCY_SEC;
         this.audioStartSec = this.audioStartSec || nowPlusLatency;
         if (this.audioStartSec >= nowSec) {
-          const buffer = ctx.createBuffer(2, AUDIO_FRAMES, ctx.sampleRate);
+          const buffer = ctx.createBuffer(2, AUDIO_FRAMES, this.audioSampleRate);
           const ch0 = buffer.getChannelData(0);
           const ch1 = buffer.getChannelData(1);
           for (let i = 0; i < AUDIO_FRAMES; i++) {
@@ -1170,8 +1209,13 @@
           const src = ctx.createBufferSource();
           src.buffer = buffer;
           src.connect(audioGain || ctx.destination);
+          activeAudioSources.add(src);
+          src.onended = () => {
+            activeAudioSources.delete(src);
+            src.disconnect();
+          };
           src.start(this.audioStartSec);
-          this.audioStartSec += AUDIO_FRAMES / ctx.sampleRate;
+          this.audioStartSec += AUDIO_FRAMES / this.audioSampleRate;
         } else {
           this.audioStartSec = nowPlusLatency;
         }
@@ -1247,9 +1291,9 @@
         }
         this.lastSec = 0;
         this.audioStartSec = 0;
+        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
         resumeAudioSafely();
         requestWakeLock();
-        this.rafId = this.rafWindow.requestAnimationFrame(this.stepFrame);
       }
 
       pause() {
@@ -1263,6 +1307,7 @@
           this.rafWindow = window;
           this.lastSec = 0;
         }
+        stopScheduledAudio();
         this.audioStartSec = 0;
         if (audioCtx && audioCtx.state === 'running') {
           audioCtx.suspend().catch(() => {});
@@ -1340,7 +1385,7 @@
     function loadUiPrefs() {
       try {
         const raw = localStorage.getItem(PREFS_KEY);
-        if (!raw) return { speed: 1, touchPad: null, autoFightRomId: null };
+        if (!raw) return { speed: 1, touchPad: null, autoFightRomId: null, muted: true };
         const parsed = JSON.parse(raw);
         const speed = SPEED_OPTIONS.includes(Number(parsed?.speed)) ? Number(parsed.speed) : 1;
         const touchPad = typeof parsed?.touchPad === 'boolean' ? parsed.touchPad : null;
@@ -1348,9 +1393,10 @@
           typeof parsed?.autoFightRomId === 'string' && parsed.autoFightRomId.length > 0
             ? parsed.autoFightRomId
             : null;
-        return { speed, touchPad, autoFightRomId };
+        const muted = typeof parsed?.muted === 'boolean' ? parsed.muted : true;
+        return { speed, touchPad, autoFightRomId, muted };
       } catch {
-        return { speed: 1, touchPad: null, autoFightRomId: null };
+        return { speed: 1, touchPad: null, autoFightRomId: null, muted: true };
       }
     }
 
@@ -1362,6 +1408,7 @@
             speed: currentSpeed,
             touchPad: touchControlsOverride,
             autoFightRomId: persistedAutoFightRomId,
+            muted: isMuted,
           })
         );
       } catch (err) {
@@ -1391,6 +1438,36 @@
       if (persist) {
         saveUiPrefs();
       }
+    }
+
+    function syncMuteButton() {
+      muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+      muteBtn.classList.toggle('active', isMuted);
+      muteBtn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+      muteBtn.title = isMuted ? 'Unmute audio (M)' : 'Mute audio (M)';
+      syncMiniPlayerUi();
+    }
+
+    function setMuted(muted, { persist = true } = {}) {
+      isMuted = Boolean(muted);
+      if (isMuted) {
+        stopScheduledAudio();
+        syncAudioGain();
+      } else {
+        syncAudioGain();
+        if (emu?.isPlaying) {
+          resumeAudioSafely();
+        }
+      }
+      syncMuteButton();
+      if (persist) {
+        saveUiPrefs();
+      }
+    }
+
+    function toggleMute() {
+      setMuted(!isMuted);
+      blurActiveElement();
     }
 
     function syncMiniPlayerButton() {
@@ -1429,6 +1506,11 @@
 
       pipUi.speedBtn.textContent = `${currentSpeed}x`;
       pipUi.speedBtn.classList.toggle('active', currentSpeed > 1);
+
+      pipUi.muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+      pipUi.muteBtn.classList.toggle('active', isMuted);
+      pipUi.muteBtn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+      pipUi.muteBtn.title = isMuted ? 'Unmute audio (M)' : 'Mute audio (M)';
 
       if (lastAutoFightText) {
         pipUi.statusPrimaryEl.textContent = lastAutoFightText;
@@ -1778,12 +1860,13 @@
         const pipTogglePlayBtn = makePipButton('toggle-play', 'Pause', togglePlayPause);
         const pipAutoFightBtn = makePipButton('auto-fight', 'Auto-Fight', toggleAutoFight);
         const pipSpeedBtn = makePipButton('speed', `${currentSpeed}x`, cycleSpeed);
+        const pipMuteBtn = makePipButton('mute', isMuted ? 'Unmute' : 'Mute', toggleMute);
         const pipReturnActionBtn = makePipButton('return', 'Return to Tab', () => {
           resumeAudioSafely();
           teardownMiniPlayer({ closeWindow: true, focusMain: true });
         });
 
-        controls.append(pipTogglePlayBtn, pipAutoFightBtn, pipSpeedBtn, pipReturnActionBtn);
+        controls.append(pipTogglePlayBtn, pipAutoFightBtn, pipSpeedBtn, pipMuteBtn, pipReturnActionBtn);
 
         const statusBox = doc.createElement('div');
         statusBox.className = 'pip-status';
@@ -1810,6 +1893,7 @@
           togglePlayBtn: pipTogglePlayBtn,
           autoFightBtn: pipAutoFightBtn,
           speedBtn: pipSpeedBtn,
+          muteBtn: pipMuteBtn,
           returnBtn: pipReturnActionBtn,
           statusPrimaryEl,
           statusHealEl,
@@ -2100,6 +2184,7 @@
     }
 
     autoFightBtn.addEventListener('click', toggleAutoFight);
+    muteBtn.addEventListener('click', toggleMute);
 
     miniPlayerBtn.addEventListener('click', () => {
       resumeAudioSafely();
@@ -2184,6 +2269,19 @@
         !isInteractiveElementFocused(e)
       ) {
         setSpeed(speedChoice);
+        e.preventDefault();
+        return;
+      }
+      if (
+        e.code === 'KeyM' &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !isInteractiveElementFocused(e)
+      ) {
+        if (!e.repeat) {
+          toggleMute();
+        }
         e.preventDefault();
         return;
       }
@@ -2422,6 +2520,7 @@
     const initialPrefs = loadUiPrefs();
     persistedAutoFightRomId = initialPrefs.autoFightRomId;
     setSpeed(initialPrefs.speed, { persist: false });
+    setMuted(initialPrefs.muted, { persist: false });
     setTouchControlsOverride(initialPrefs.touchPad, { persist: false });
     syncMiniPlayerButton();
 
@@ -2450,6 +2549,16 @@
       loadRom,
       getSpeed: () => currentSpeed,
       setSpeed: (speed) => setSpeed(speed),
+      getAudio: () => ({
+        muted: isMuted,
+        audible: shouldOutputAudio(),
+        hasContext: Boolean(audioCtx),
+        contextState: audioCtx?.state ?? null,
+        gain: audioGain ? audioGain.gain.value : null,
+        activeSources: activeAudioSources.size,
+        setMuted: (val) => setMuted(val),
+        toggleMute,
+      }),
       getTouchControls: () => ({
         visible: !touchGamepadEl.hidden,
         held: Array.from(heldTouchButtons).sort(),

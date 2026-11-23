@@ -119,6 +119,7 @@ async function main() {
     'google-chrome',
     [
       '--headless=new',
+      '--mute-audio',
       '--no-sandbox',
       '--disable-gpu',
       `--remote-debugging-port=${CDP_PORT}`,
@@ -201,6 +202,22 @@ async function main() {
     assert.doesNotMatch(state.status, /resumed auto-save/, 'Initial fresh load should not report resumed auto-save');
     assert.notEqual(state.activeTag, 'INPUT', 'File input must be blurred after ROM load');
     assert.ok(state.colorCount >= 2, `Expected >= 2 colors (MBC3 pass), got ${state.colorCount}`);
+
+    const initialAudio = await client.eval(`({
+      ...window.__retroIdle.getAudio(),
+      btnDisabled: document.getElementById('mute-btn').disabled,
+      btnText: document.getElementById('mute-btn').textContent,
+      btnActive: document.getElementById('mute-btn').classList.contains('active'),
+      btnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
+    })`);
+    assert.equal(initialAudio.muted, true, 'Audio must be muted by default');
+    assert.equal(initialAudio.audible, false, 'Audio must not be audible while muted');
+    assert.equal(initialAudio.hasContext, false, 'AudioContext should not be created while muted');
+    assert.equal(initialAudio.activeSources, 0, 'No audio sources should be scheduled while muted');
+    assert.equal(initialAudio.btnDisabled, false, 'Mute button must be enabled');
+    assert.equal(initialAudio.btnText, 'Unmute', 'Mute button should read Unmute when muted');
+    assert.equal(initialAudio.btnActive, true, 'Mute button should be active when muted');
+    assert.equal(initialAudio.btnPressed, 'true', 'Mute button aria-pressed should be true when muted');
 
     // Verify active VBlank animation (SCX increments every frame)
     await sleep(350);
@@ -658,6 +675,91 @@ async function main() {
     assert.equal(speed1Info.speed, 1, 'Expected Digit1 hotkey to switch speed back to 1x');
     assert.equal(speed1Info.btn1Active, true, 'Expected 1x button active after Digit1');
 
+    // Audio mute toggle, speed interaction, and M hotkey checks
+    const stillMutedAudio = await client.eval(`window.__retroIdle.getAudio()`);
+    assert.equal(stillMutedAudio.muted, true, 'Audio must remain muted after prior interactions');
+    assert.equal(stillMutedAudio.hasContext, false, 'AudioContext must remain uncreated while muted');
+    assert.equal(stillMutedAudio.activeSources, 0, 'No audio sources should exist while muted');
+
+    await client.eval(`document.getElementById('mute-btn').click()`, { userGesture: true });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAudio().muted === false`),
+      5000,
+      30
+    );
+    const unmutedAudio = await client.eval(`({
+      ...window.__retroIdle.getAudio(),
+      btnText: document.getElementById('mute-btn').textContent,
+      btnActive: document.getElementById('mute-btn').classList.contains('active'),
+      btnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(unmutedAudio.muted, false);
+    assert.equal(unmutedAudio.audible, true);
+    assert.equal(unmutedAudio.hasContext, true);
+    assert.equal(unmutedAudio.gain, 1);
+    assert.equal(unmutedAudio.btnText, 'Mute');
+    assert.equal(unmutedAudio.btnActive, false);
+    assert.equal(unmutedAudio.btnPressed, 'false');
+    assert.notEqual(unmutedAudio.activeTag, 'BUTTON', 'Mute button must blur after click');
+
+    // Switching to 4x silences output while preserving unmuted preference; 1x restores audible output
+    await client.eval(`document.querySelector('.speed-btn[data-speed="4"]').click()`);
+    const audioAt4x = await client.eval(`window.__retroIdle.getAudio()`);
+    assert.equal(audioAt4x.muted, false, '4x speed must keep unmuted preference');
+    assert.equal(audioAt4x.audible, false, '4x speed must not output audio');
+    assert.equal(audioAt4x.gain, 0, '4x speed must set gain to 0');
+    assert.equal(audioAt4x.activeSources, 0, '4x speed must stop scheduled audio sources');
+
+    await client.eval(`document.querySelector('.speed-btn[data-speed="1"]').click()`);
+    const audioBack1x = await client.eval(`window.__retroIdle.getAudio()`);
+    assert.equal(audioBack1x.audible, true, 'Returning to 1x while unmuted must restore audible output');
+    assert.equal(audioBack1x.gain, 1, 'Returning to 1x while unmuted must restore gain 1');
+
+    // KeyM hotkey mutes and ignores key-repeat
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'm',
+      code: 'KeyM',
+      windowsVirtualKeyCode: 77,
+      nativeVirtualKeyCode: 77,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'm',
+      code: 'KeyM',
+      windowsVirtualKeyCode: 77,
+      nativeVirtualKeyCode: 77,
+    });
+    const mutedViaKey = await client.eval(`({
+      ...window.__retroIdle.getAudio(),
+      btnText: document.getElementById('mute-btn').textContent,
+      btnActive: document.getElementById('mute-btn').classList.contains('active'),
+      btnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
+    })`);
+    assert.equal(mutedViaKey.muted, true);
+    assert.equal(mutedViaKey.audible, false);
+    assert.equal(mutedViaKey.gain, 0);
+    assert.equal(mutedViaKey.activeSources, 0);
+    assert.equal(mutedViaKey.btnText, 'Unmute');
+    assert.equal(mutedViaKey.btnActive, true);
+    assert.equal(mutedViaKey.btnPressed, 'true');
+
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getAudio().contextState === 'suspended'`),
+      5000,
+      30
+    );
+
+    await client.eval(`
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', code: 'KeyM', repeat: true, bubbles: true, cancelable: true }))
+    `);
+    assert.equal(
+      await client.eval(`window.__retroIdle.getAudio().muted`),
+      true,
+      'KeyM with repeat:true must not toggle mute state'
+    );
+
     // Document Picture-in-Picture Mini-Player checks (when supported by browser)
     const miniSupported = await client.eval(`window.__retroIdle.getMiniPlayer().supported`);
     let miniPlayerInfo = { supported: miniSupported };
@@ -743,6 +845,58 @@ async function main() {
       assert.equal(pipSpeed1.speed, 1, 'Expected Digit1 inside PiP to restore 1x');
       assert.equal(pipSpeed1.pipBtnText, '1x', 'Expected PiP speed button text to restore 1x');
       assert.equal(pipSpeed1.main1Active, true, 'Expected main 1x button active after Digit1 in PiP');
+
+      // PiP mute button and KeyM inside PiP sync with main #mute-btn
+      const pipMuteInitial = await client.eval(`(() => {
+        const b = window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="mute"]');
+        return {
+          text: b.textContent,
+          active: b.classList.contains('active'),
+          pressed: b.getAttribute('aria-pressed'),
+        };
+      })()`);
+      assert.equal(pipMuteInitial.text, 'Unmute');
+      assert.equal(pipMuteInitial.active, true);
+      assert.equal(pipMuteInitial.pressed, 'true');
+
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="mute"]').click()
+      `, { userGesture: true });
+      const pipUnmuted = await client.eval(`(() => {
+        const w = window.__retroIdle.getMiniPlayer().getWindow();
+        const b = w.document.querySelector('[data-pip-action="mute"]');
+        return {
+          muted: window.__retroIdle.getAudio().muted,
+          pipText: b.textContent,
+          pipActive: b.classList.contains('active'),
+          mainText: document.getElementById('mute-btn').textContent,
+          pipActiveTag: w.document.activeElement?.tagName,
+        };
+      })()`);
+      assert.equal(pipUnmuted.muted, false, 'Clicking PiP mute button should unmute');
+      assert.equal(pipUnmuted.pipText, 'Mute');
+      assert.equal(pipUnmuted.pipActive, false);
+      assert.equal(pipUnmuted.mainText, 'Mute');
+      assert.notEqual(pipUnmuted.pipActiveTag, 'BUTTON', 'PiP Mute button must blur after click');
+
+      await client.eval(`
+        (() => {
+          const w = window.__retroIdle.getMiniPlayer().getWindow();
+          w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'm', code: 'KeyM', bubbles: true, cancelable: true }));
+        })()
+      `);
+      const pipRemuted = await client.eval(`(() => {
+        const w = window.__retroIdle.getMiniPlayer().getWindow();
+        const b = w.document.querySelector('[data-pip-action="mute"]');
+        return {
+          muted: window.__retroIdle.getAudio().muted,
+          pipText: b.textContent,
+          mainText: document.getElementById('mute-btn').textContent,
+        };
+      })()`);
+      assert.equal(pipRemuted.muted, true, 'KeyM inside PiP should re-mute');
+      assert.equal(pipRemuted.pipText, 'Unmute');
+      assert.equal(pipRemuted.mainText, 'Unmute');
 
       // Keyboard forwarding in PiP (KeyX -> BGP flips 0xE4 -> 0x1B -> 0xE4)
       await client.eval(`
@@ -1303,10 +1457,11 @@ async function main() {
     await client.eval(`document.querySelector('.speed-btn[data-speed="4"]').click()`);
     await client.eval(`document.getElementById('touch-pad-btn').click()`);
     await client.eval(`document.getElementById('auto-fight-btn').click()`);
+    await client.eval(`document.getElementById('mute-btn').click()`, { userGesture: true });
     await waitFor(
       async () =>
         await client.eval(
-          `window.__retroIdle.getSpeed() === 4 && window.__retroIdle.getTouchControls().visible === true && window.__retroIdle.getAutoFight().active === true`
+          `window.__retroIdle.getSpeed() === 4 && window.__retroIdle.getTouchControls().visible === true && window.__retroIdle.getAutoFight().active === true && window.__retroIdle.getAudio().muted === false`
         ),
       6000,
       30
@@ -1339,6 +1494,10 @@ async function main() {
       autoFightBtnText: document.getElementById('auto-fight-btn').textContent,
       autoFightStatusHidden: document.getElementById('auto-fight-status').hidden,
       autoFightStatusError: document.getElementById('auto-fight-status').classList.contains('error'),
+      muted: window.__retroIdle.getAudio().muted,
+      muteBtnText: document.getElementById('mute-btn').textContent,
+      muteBtnActive: document.getElementById('mute-btn').classList.contains('active'),
+      muteBtnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
     })`);
     assert.equal(prefsAfterReload1.speed, 4, 'Speed 4x must persist across refresh');
     assert.equal(prefsAfterReload1.emuSpeed, 4, 'Emulator speed must restore to 4x on refresh');
@@ -1355,15 +1514,20 @@ async function main() {
     assert.equal(prefsAfterReload1.autoFightBtnText, 'Stop Auto-Fight');
     assert.equal(prefsAfterReload1.autoFightStatusHidden, false);
     assert.equal(prefsAfterReload1.autoFightStatusError, false);
+    assert.equal(prefsAfterReload1.muted, false, 'Unmuted state must persist across refresh');
+    assert.equal(prefsAfterReload1.muteBtnText, 'Mute');
+    assert.equal(prefsAfterReload1.muteBtnActive, false);
+    assert.equal(prefsAfterReload1.muteBtnPressed, 'false');
 
-    // Turn all three back OFF / 1x, refresh again, and confirm OFF state persists (including explicit Touch Pad OFF on mobile)
+    // Turn all four back OFF / 1x / muted, refresh again, and confirm OFF state persists (including explicit Touch Pad OFF on mobile)
     await client.eval(`document.getElementById('auto-fight-btn').click()`);
     await client.eval(`document.getElementById('touch-pad-btn').click()`);
     await client.eval(`document.querySelector('.speed-btn[data-speed="1"]').click()`);
+    await client.eval(`document.getElementById('mute-btn').click()`);
     await waitFor(
       async () =>
         await client.eval(
-          `window.__retroIdle.getSpeed() === 1 && window.__retroIdle.getTouchControls().visible === false && window.__retroIdle.getAutoFight().active === false`
+          `window.__retroIdle.getSpeed() === 1 && window.__retroIdle.getTouchControls().visible === false && window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAudio().muted === true`
         ),
       5000,
       30
@@ -1390,6 +1554,11 @@ async function main() {
       autoFightBtnActive: document.getElementById('auto-fight-btn').classList.contains('active'),
       autoFightBtnPressed: document.getElementById('auto-fight-btn').getAttribute('aria-pressed'),
       autoFightBtnText: document.getElementById('auto-fight-btn').textContent,
+      muted: window.__retroIdle.getAudio().muted,
+      hasContext: window.__retroIdle.getAudio().hasContext,
+      muteBtnText: document.getElementById('mute-btn').textContent,
+      muteBtnActive: document.getElementById('mute-btn').classList.contains('active'),
+      muteBtnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
     })`);
     assert.equal(prefsAfterReload2.speed, 1, 'Speed 1x must persist after turning back to 1x');
     assert.equal(prefsAfterReload2.speed1Active, true);
@@ -1400,6 +1569,11 @@ async function main() {
     assert.equal(prefsAfterReload2.autoFightBtnActive, false);
     assert.equal(prefsAfterReload2.autoFightBtnPressed, 'false');
     assert.equal(prefsAfterReload2.autoFightBtnText, 'Auto-Fight');
+    assert.equal(prefsAfterReload2.muted, true, 'Muted state must persist across refresh');
+    assert.equal(prefsAfterReload2.hasContext, false, 'AudioContext should not be created on reload when muted');
+    assert.equal(prefsAfterReload2.muteBtnText, 'Unmute');
+    assert.equal(prefsAfterReload2.muteBtnActive, true);
+    assert.equal(prefsAfterReload2.muteBtnPressed, 'true');
 
     await client.send('Emulation.setDeviceMetricsOverride', {
       width: 390,
@@ -1421,11 +1595,13 @@ async function main() {
         speed: prefsAfterReload1.speed,
         touchVisible: prefsAfterReload1.touchVisible,
         autoFightActive: prefsAfterReload1.autoFightActive,
+        muted: prefsAfterReload1.muted,
       },
       reloadOff: {
         speed: prefsAfterReload2.speed,
         touchVisible: prefsAfterReload2.touchVisible,
         autoFightActive: prefsAfterReload2.autoFightActive,
+        muted: prefsAfterReload2.muted,
       },
     };
 
