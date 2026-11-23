@@ -28,7 +28,7 @@ Browser Game Boy / Game Boy Color emulator with built-in idle automation — pla
 - [x] **Pokémon Red / Blue** (GB) — Auto-Fight & automatic Heal Center round-trip
 - [x] **Pokémon Yellow** (GB / GBC) — Auto-Fight & automatic Heal Center round-trip
 - [x] **Pokémon Crystal** (GBC) — Auto-Fight & automatic Heal Center round-trip
-- [ ] **Pokémon Emerald** (GBA) — GBA WASM core (e.g. `mGBA`), Auto-Fight & automatic Heal Center round-trip
+- [ ] **Pokémon Emerald** (GBA) — GBA WASM core (e.g. `mGBA` using built-in open-source HLE BIOS; no copyrighted BIOS dump), Auto-Fight & automatic Heal Center round-trip
 
 ## Controls
 
