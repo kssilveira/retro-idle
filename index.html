@@ -602,7 +602,7 @@
       <button type="button" id="export-sav-btn" disabled>Export .sav</button>
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
-      <button type="button" id="auto-fight-btn" disabled title="Pokémon Red / Blue / Yellow / Crystal">Auto-Fight</button>
+      <button type="button" id="auto-fight-btn" aria-pressed="false" disabled title="Pokémon Red / Blue / Yellow / Crystal">Auto-Fight</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen Game Boy controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
     </div>
@@ -688,6 +688,7 @@
     const STORE_NAME = 'kv';
     const LAST_ROM_KEY = 'lastRom';
     const UNLOAD_KEY = 'retro-idle:unload';
+    const PREFS_KEY = 'retro-idle:prefs';
 
     const CARTRIDGE_TYPES = {
       0x00: 'ROM ONLY',
@@ -789,6 +790,8 @@
     let lastAutoFightIsError = false;
     let lastHealCenterText = '';
     let lastHealCenterLinked = false;
+    let persistedAutoFightRomId = null;
+    let autoFightStoppedOnHide = false;
     const heldKeys = new Set();
     const activeTouchPointers = new Map();
     const heldTouchButtons = new Set();
@@ -1334,7 +1337,46 @@
       }
     }
 
-    function setSpeed(speed) {
+    function loadUiPrefs() {
+      try {
+        const raw = localStorage.getItem(PREFS_KEY);
+        if (!raw) return { speed: 1, touchPad: null, autoFightRomId: null };
+        const parsed = JSON.parse(raw);
+        const speed = SPEED_OPTIONS.includes(Number(parsed?.speed)) ? Number(parsed.speed) : 1;
+        const touchPad = typeof parsed?.touchPad === 'boolean' ? parsed.touchPad : null;
+        const autoFightRomId =
+          typeof parsed?.autoFightRomId === 'string' && parsed.autoFightRomId.length > 0
+            ? parsed.autoFightRomId
+            : null;
+        return { speed, touchPad, autoFightRomId };
+      } catch {
+        return { speed: 1, touchPad: null, autoFightRomId: null };
+      }
+    }
+
+    function saveUiPrefs() {
+      try {
+        localStorage.setItem(
+          PREFS_KEY,
+          JSON.stringify({
+            speed: currentSpeed,
+            touchPad: touchControlsOverride,
+            autoFightRomId: persistedAutoFightRomId,
+          })
+        );
+      } catch (err) {
+        console.warn('Could not save UI preferences:', err);
+      }
+    }
+
+    function setPersistedAutoFightRomId(romId) {
+      const next = typeof romId === 'string' && romId.length > 0 ? romId : null;
+      if (next === persistedAutoFightRomId) return;
+      persistedAutoFightRomId = next;
+      saveUiPrefs();
+    }
+
+    function setSpeed(speed, { persist = true } = {}) {
       const next = Number(speed);
       if (!SPEED_OPTIONS.includes(next)) return;
       currentSpeed = next;
@@ -1346,6 +1388,9 @@
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       }
       syncMiniPlayerUi();
+      if (persist) {
+        saveUiPrefs();
+      }
     }
 
     function syncMiniPlayerButton() {
@@ -1411,12 +1456,17 @@
       autoFightBtn.disabled = !supported || isBusy;
       autoFightBtn.textContent = active ? 'Stop Auto-Fight' : 'Auto-Fight';
       autoFightBtn.classList.toggle('active', active);
+      autoFightBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
       syncHealCenterStatus();
       syncMiniPlayerUi();
     }
 
-    function stopAutoFight(reason = null) {
+    function stopAutoFight(reason = null, { preservePreference = false } = {}) {
       autoFight.stop(reason || 'manual');
+      if (!preservePreference) {
+        autoFightStoppedOnHide = false;
+        setPersistedAutoFightRomId(null);
+      }
       emu?.setOverrideButtons(null);
       syncAutoFightButton();
       const showReason = Boolean(reason && reason !== 'manual');
@@ -1468,8 +1518,10 @@
         emu.resume();
         syncControls();
       }
+      autoFightStoppedOnHide = false;
       const snap = currentAutoFightProfile.readSnapshot((a) => emu.readWramLinear(a));
       autoFight.start(snap);
+      setPersistedAutoFightRomId(currentRomId);
       syncAutoFightButton();
       stepAutoFight();
       blurActiveElement();
@@ -1856,10 +1908,11 @@
       }
     }
 
-    async function loadRom(romSource, fileName, { persist = false } = {}) {
+    async function loadRom(romSource, fileName, { persist = false, restoreAutoFight = false } = {}) {
       if (!romSource || isBusy) return;
       const label = fileName || (romSource instanceof File ? romSource.name : 'ROM');
       let loadStatusSuffix = '';
+      let resumedAutoState = false;
       isBusy = true;
       setActionButtonsDisabled();
       statusEl.textContent = `Loading ${label}...`;
@@ -1881,7 +1934,7 @@
           romBytes = new Uint8Array(await res.arrayBuffer());
         }
 
-        stopAutoFight();
+        stopAutoFight(null, { preservePreference: restoreAutoFight });
         clearTouchInput();
         await flushEmulatorPersistence();
         autoFight.clearTrail();
@@ -1917,6 +1970,7 @@
 
         if (autoState && emu.loadState(autoState)) {
           loadStatusSuffix = ' — resumed auto-save';
+          resumedAutoState = true;
           if (currentAutoFightProfile && savedTrail) {
             autoFight.importTrail(savedTrail);
           }
@@ -1937,6 +1991,17 @@
         }
         if (emu && !statusEl.textContent.startsWith('Failed')) {
           syncControls(loadStatusSuffix);
+          if (
+            restoreAutoFight &&
+            resumedAutoState &&
+            currentAutoFightProfile &&
+            currentRomId &&
+            persistedAutoFightRomId === currentRomId
+          ) {
+            startAutoFight();
+          } else if (restoreAutoFight && persistedAutoFightRomId !== null) {
+            setPersistedAutoFightRomId(null);
+          }
         } else {
           setActionButtonsDisabled();
         }
@@ -2210,10 +2275,17 @@
       }
     }
 
+    function setTouchControlsOverride(val, { persist = true } = {}) {
+      touchControlsOverride = val === null ? null : Boolean(val);
+      if (persist) {
+        saveUiPrefs();
+      }
+      syncTouchControlsVisibility();
+    }
+
     touchPadBtn.addEventListener('click', () => {
       resumeAudioSafely();
-      touchControlsOverride = !isTouchControlsVisible();
-      syncTouchControlsVisibility();
+      setTouchControlsOverride(!isTouchControlsVisible());
       blurActiveElement();
     });
 
@@ -2280,7 +2352,8 @@
     function handleDocumentHidden() {
       clearTouchInput();
       if (autoFight.getState().active) {
-        stopAutoFight();
+        autoFightStoppedOnHide = true;
+        stopAutoFight(null, { preservePreference: true });
       }
       writeUnloadSnapshot();
       releaseWakeLock();
@@ -2316,6 +2389,12 @@
       } else if (document.visibilityState === 'visible') {
         clearTimeout(pipHiddenPauseTimer);
         pipHiddenPauseTimer = 0;
+        if (autoFightStoppedOnHide) {
+          autoFightStoppedOnHide = false;
+          if (!autoFight.getState().active) {
+            setPersistedAutoFightRomId(null);
+          }
+        }
         if (emu?.isPlaying) {
           requestWakeLock();
         }
@@ -2342,6 +2421,12 @@
       if (file) await loadRom(file, file.name, { persist: true });
     });
 
+    const initialPrefs = loadUiPrefs();
+    persistedAutoFightRomId = initialPrefs.autoFightRomId;
+    setSpeed(initialPrefs.speed, { persist: false });
+    setTouchControlsOverride(initialPrefs.touchPad, { persist: false });
+    syncMiniPlayerButton();
+
     try {
       binjgb = await Binjgb({ locateFile: (path) => `./vendor/binjgb/${path}` });
     } catch (err) {
@@ -2353,29 +2438,25 @@
     const params = new URLSearchParams(window.location.search);
     const romUrl = params.get('rom');
     if (romUrl) {
-      loadRom(romUrl, romUrl.split('/').pop());
+      loadRom(romUrl, romUrl.split('/').pop(), { restoreAutoFight: true });
     } else {
       dbGet(LAST_ROM_KEY).then((record) => {
         if (record?.bytes && record?.name && !emu) {
-          loadRom(new File([record.bytes], record.name), record.name);
+          loadRom(new File([record.bytes], record.name), record.name, { restoreAutoFight: true });
         }
       });
     }
-
-    syncTouchControlsVisibility();
-    syncMiniPlayerButton();
 
     window.__retroIdle = {
       getEmulator: () => emu,
       loadRom,
       getSpeed: () => currentSpeed,
-      setSpeed,
+      setSpeed: (speed) => setSpeed(speed),
       getTouchControls: () => ({
         visible: !touchGamepadEl.hidden,
         held: Array.from(heldTouchButtons).sort(),
         setVisible: (val) => {
-          touchControlsOverride = val === null ? null : Boolean(val);
-          syncTouchControlsVisibility();
+          setTouchControlsOverride(val);
         },
       }),
       getMiniPlayer: () => ({

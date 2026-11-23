@@ -1295,6 +1295,147 @@ async function main() {
     assert.equal(shinyStopUi.statusText, 'Auto-Fight stopped: shiny encounter');
     assert.equal(shinyStopUi.isError, true);
 
+    const prefsAfterShinyStop = await client.eval(`JSON.parse(localStorage.getItem('retro-idle:prefs') || 'null')`);
+    assert.equal(prefsAfterShinyStop?.autoFightRomId, null, 'Automatic shiny stop must clear persisted Auto-Fight state');
+
+    // UI button persistence across page refresh (Speed, Touch Pad, Auto-Fight)
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const ptr = emu.module._emulator_get_wram_ptr(emu.e);
+        emu.module.HEAPU8[ptr + ((1 << 12) | (0xd22d & 0x0fff))] = 0; // wBattleMode = overworld
+      })()
+    `);
+
+    await client.eval(`document.querySelector('.speed-btn[data-speed="4"]').click()`);
+    await client.eval(`document.getElementById('touch-pad-btn').click()`);
+    await client.eval(`document.getElementById('auto-fight-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getSpeed() === 4 && window.__retroIdle.getTouchControls().visible === true && window.__retroIdle.getAutoFight().active === true`
+        ),
+      6000,
+      30
+    );
+
+    await client.eval(`window.__beforeReload = true`);
+    await client.send('Page.reload');
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__beforeReload === undefined && Boolean(window.__retroIdle?.getEmulator()?.isPlaying && document.getElementById('status')?.textContent.includes('resumed auto-save') && window.__retroIdle?.getAutoFight()?.active === true)`
+        ),
+      12000,
+      40
+    );
+
+    const prefsAfterReload1 = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      emuSpeed: window.__retroIdle.getEmulator().speed,
+      speed4Active: document.querySelector('.speed-btn[data-speed="4"]').classList.contains('active'),
+      speed4Pressed: document.querySelector('.speed-btn[data-speed="4"]').getAttribute('aria-pressed'),
+      speed1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+      touchVisible: window.__retroIdle.getTouchControls().visible,
+      touchBtnActive: document.getElementById('touch-pad-btn').classList.contains('active'),
+      touchBtnPressed: document.getElementById('touch-pad-btn').getAttribute('aria-pressed'),
+      bodyTouchClass: document.body.classList.contains('touch-controls-visible'),
+      autoFightActive: window.__retroIdle.getAutoFight().active,
+      autoFightBtnActive: document.getElementById('auto-fight-btn').classList.contains('active'),
+      autoFightBtnPressed: document.getElementById('auto-fight-btn').getAttribute('aria-pressed'),
+      autoFightBtnText: document.getElementById('auto-fight-btn').textContent,
+      autoFightStatusHidden: document.getElementById('auto-fight-status').hidden,
+      autoFightStatusError: document.getElementById('auto-fight-status').classList.contains('error'),
+    })`);
+    assert.equal(prefsAfterReload1.speed, 4, 'Speed 4x must persist across refresh');
+    assert.equal(prefsAfterReload1.emuSpeed, 4, 'Emulator speed must restore to 4x on refresh');
+    assert.equal(prefsAfterReload1.speed4Active, true);
+    assert.equal(prefsAfterReload1.speed4Pressed, 'true');
+    assert.equal(prefsAfterReload1.speed1Active, false);
+    assert.equal(prefsAfterReload1.touchVisible, true, 'Touch Pad ON must persist across refresh');
+    assert.equal(prefsAfterReload1.touchBtnActive, true);
+    assert.equal(prefsAfterReload1.touchBtnPressed, 'true');
+    assert.equal(prefsAfterReload1.bodyTouchClass, true);
+    assert.equal(prefsAfterReload1.autoFightActive, true, 'Auto-Fight ON must persist across refresh');
+    assert.equal(prefsAfterReload1.autoFightBtnActive, true);
+    assert.equal(prefsAfterReload1.autoFightBtnPressed, 'true');
+    assert.equal(prefsAfterReload1.autoFightBtnText, 'Stop Auto-Fight');
+    assert.equal(prefsAfterReload1.autoFightStatusHidden, false);
+    assert.equal(prefsAfterReload1.autoFightStatusError, false);
+
+    // Turn all three back OFF / 1x, refresh again, and confirm OFF state persists (including explicit Touch Pad OFF on mobile)
+    await client.eval(`document.getElementById('auto-fight-btn').click()`);
+    await client.eval(`document.getElementById('touch-pad-btn').click()`);
+    await client.eval(`document.querySelector('.speed-btn[data-speed="1"]').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getSpeed() === 1 && window.__retroIdle.getTouchControls().visible === false && window.__retroIdle.getAutoFight().active === false`
+        ),
+      5000,
+      30
+    );
+
+    await client.eval(`window.__beforeReload = true`);
+    await client.send('Page.reload');
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__beforeReload === undefined && Boolean(window.__retroIdle?.getEmulator()?.isPlaying && document.getElementById('status')?.textContent.includes('resumed auto-save'))`
+        ),
+      12000,
+      40
+    );
+
+    const prefsAfterReload2 = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      speed1Active: document.querySelector('.speed-btn[data-speed="1"]').classList.contains('active'),
+      touchVisible: window.__retroIdle.getTouchControls().visible,
+      touchBtnActive: document.getElementById('touch-pad-btn').classList.contains('active'),
+      touchBtnPressed: document.getElementById('touch-pad-btn').getAttribute('aria-pressed'),
+      autoFightActive: window.__retroIdle.getAutoFight().active,
+      autoFightBtnActive: document.getElementById('auto-fight-btn').classList.contains('active'),
+      autoFightBtnPressed: document.getElementById('auto-fight-btn').getAttribute('aria-pressed'),
+      autoFightBtnText: document.getElementById('auto-fight-btn').textContent,
+    })`);
+    assert.equal(prefsAfterReload2.speed, 1, 'Speed 1x must persist after turning back to 1x');
+    assert.equal(prefsAfterReload2.speed1Active, true);
+    assert.equal(prefsAfterReload2.touchVisible, false, 'Touch Pad OFF must persist across refresh');
+    assert.equal(prefsAfterReload2.touchBtnActive, false);
+    assert.equal(prefsAfterReload2.touchBtnPressed, 'false');
+    assert.equal(prefsAfterReload2.autoFightActive, false, 'Auto-Fight OFF must stay off across refresh');
+    assert.equal(prefsAfterReload2.autoFightBtnActive, false);
+    assert.equal(prefsAfterReload2.autoFightBtnPressed, 'false');
+    assert.equal(prefsAfterReload2.autoFightBtnText, 'Auto-Fight');
+
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await sleep(100);
+    assert.equal(
+      await client.eval(`window.__retroIdle.getTouchControls().visible`),
+      false,
+      'Explicit Touch Pad OFF preference must override responsive mobile auto-show'
+    );
+    await client.send('Emulation.clearDeviceMetricsOverride');
+    await client.eval(`window.__retroIdle.getTouchControls().setVisible(null)`);
+
+    const prefsRefreshCheck = {
+      reloadOn: {
+        speed: prefsAfterReload1.speed,
+        touchVisible: prefsAfterReload1.touchVisible,
+        autoFightActive: prefsAfterReload1.autoFightActive,
+      },
+      reloadOff: {
+        speed: prefsAfterReload2.speed,
+        touchVisible: prefsAfterReload2.touchVisible,
+        autoFightActive: prefsAfterReload2.autoFightActive,
+      },
+    };
+
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(
       (e) =>
@@ -1335,6 +1476,7 @@ async function main() {
         bank2MapGroup: crystalCheck.bank2MapGroup,
         shinyStop: shinyStopUi.statusText,
       },
+      prefsRefreshCheck,
       mobileCheck: {
         portraitBottom: portraitLayout.gamepadBottom,
         landscapeMaxBottom: Math.round(
