@@ -2011,9 +2011,7 @@
         } else if (romSource instanceof Blob) {
           romBytes = new Uint8Array(await romSource.arrayBuffer());
         } else {
-          const res = await fetch(romSource);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          romBytes = new Uint8Array(await res.arrayBuffer());
+          throw new Error('Unsupported ROM source; provide a local .gb / .gbc file');
         }
 
         stopAutoFight(null, { preservePreference: restoreAutoFight });
@@ -2532,17 +2530,11 @@
       throw err;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const romUrl = params.get('rom');
-    if (romUrl) {
-      loadRom(romUrl, romUrl.split('/').pop(), { restoreAutoFight: true });
-    } else {
-      dbGet(LAST_ROM_KEY).then((record) => {
-        if (record?.bytes && record?.name && !emu) {
-          loadRom(new File([record.bytes], record.name), record.name, { restoreAutoFight: true });
-        }
-      });
-    }
+    dbGet(LAST_ROM_KEY).then((record) => {
+      if (record?.bytes && record?.name && !emu) {
+        loadRom(new File([record.bytes], record.name), record.name, { restoreAutoFight: true });
+      }
+    });
 
     window.__retroIdle = {
       getEmulator: () => emu,

@@ -6,7 +6,7 @@
   - `vendor/binjgb/binjgb.wasm` (`88,652` bytes)
   - `vendor/binjgb/LICENSE` (MIT)
 - **Implemented features in `index.html` and `autofight.js`:**
-  - `.gb` / `.gbc` file picker (`#rom-input`) and full-page drag-and-drop (`loadRom`), plus `?rom=<url>` support. (`.zip` files are rejected with a clear unzip prompt.)
+  - `.gb` / `.gbc` file picker (`#rom-input`) and full-page drag-and-drop (`loadRom`). (`.zip` files are rejected with a clear unzip prompt.)
   - Last-ROM persistence in `IndexedDB` so refreshing or reopening auto-boots the previous ROM.
   - Keyboard (`Arrow Keys` / `WASD`, `X` = A, `Z` = B, `Enter` = Start, `Shift` / `Tab` = Select), Gamepad API, and **mobile multi-touch Game Boy controls** (`#touch-gamepad`, `#touch-dpad`, B/A, Start/Select, `#touch-pad-btn` toggle; auto-enabled for `(pointer: coarse), (max-width: 768px)` with portrait and side-by-side landscape handheld layouts, Screen Wake Lock while playing, and iOS/Android `accept` removal so `.gb`/`.gbc`/`.sav` files stay selectable; explicit Touch Pad state persists across refresh).
   - Transport controls: **Pause/Resume** (`#toggle-play`), **Reset** (`#reset-btn`), **Save State** (`#save-state-btn`), **Load State** (`#load-state-btn`), **Export `.sav`** (`#export-sav-btn`), and **Import `.sav`** (`#import-sav-btn` + `#sav-input`).
