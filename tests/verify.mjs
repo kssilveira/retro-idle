@@ -10,6 +10,7 @@ const ROM_PATH = path.join(TMP_DIR, 'mbc3-test.gb');
 const YELLOW_ROM_PATH = path.join(TMP_DIR, 'pokemon-yellow-test.gbc');
 const CRYSTAL_ROM_PATH = path.join(TMP_DIR, 'pokemon-crystal-test.gbc');
 const IMPORTED_SAV_PATH = path.join(TMP_DIR, 'imported.sav');
+const DOWNLOADS_DIR = path.join(TMP_DIR, 'downloads');
 const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
 const SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot.png');
 const MOBILE_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-mobile.png');
@@ -107,6 +108,8 @@ async function main() {
     CRYSTAL_ROM_PATH,
     buildTestRom({ title: 'PM_CRYSTAL', cgbFlag: 0xc0, cartType: 0x10 })
   );
+  fs.rmSync(DOWNLOADS_DIR, { recursive: true, force: true });
+  fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
   fs.rmSync(CHROME_PROFILE, { recursive: true, force: true });
   fs.mkdirSync(CHROME_PROFILE, { recursive: true });
 
@@ -151,6 +154,10 @@ async function main() {
     await client.send('Page.enable');
     await client.send('DOM.enable');
     await client.send('Log.enable');
+    await client.send('Browser.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath: DOWNLOADS_DIR,
+    });
 
     await waitFor(async () => {
       return await client.eval(`Boolean(window.__retroIdle && document.getElementById('rom-input'))`);
@@ -328,7 +335,7 @@ async function main() {
       })()
     `);
 
-    await client.eval(`document.getElementById('export-sav-btn').click()`);
+    await client.eval(`document.getElementById('export-sav-btn').click()`, { userGesture: true });
     await waitFor(
       async () =>
         await client.eval(
@@ -337,6 +344,20 @@ async function main() {
       5000,
       30
     );
+    const downloadedSavPath = path.join(DOWNLOADS_DIR, 'MBC3_TEST.sav');
+    await waitFor(
+      () => fs.existsSync(downloadedSavPath) && fs.statSync(downloadedSavPath).size === 32768,
+      5000,
+      30
+    );
+    const downloaded1 = fs.readFileSync(downloadedSavPath);
+    assert.equal(downloaded1.length, 32768, `Expected 32768-byte downloaded .sav #1, got ${downloaded1.length}`);
+    assert.equal(
+      downloaded1[0x2000],
+      0xa5,
+      `Expected downloaded SRAM[0x2000]=0xA5, got 0x${downloaded1[0x2000]?.toString(16)}`
+    );
+    fs.rmSync(downloadedSavPath, { force: true });
     const exported1Info = await client.eval(`({
       len: window.__capturedSavs[0].length,
       bank1Byte0: window.__capturedSavs[0][0x2000],
@@ -386,7 +407,7 @@ async function main() {
     assert.equal(sramCheckAfterImport.b1_1, 0x42, 'Imported SRAM[0x2001] should persist across reset');
 
     // Re-export .sav and confirm imported bytes are present in download
-    await client.eval(`document.getElementById('export-sav-btn').click()`);
+    await client.eval(`document.getElementById('export-sav-btn').click()`, { userGesture: true });
     await waitFor(
       async () =>
         await client.eval(
@@ -395,6 +416,15 @@ async function main() {
       5000,
       30
     );
+    await waitFor(
+      () => fs.existsSync(downloadedSavPath) && fs.statSync(downloadedSavPath).size === 32768,
+      5000,
+      30
+    );
+    const downloaded2 = fs.readFileSync(downloadedSavPath);
+    assert.equal(downloaded2.length, 32768, `Expected 32768-byte downloaded .sav #2, got ${downloaded2.length}`);
+    assert.deepEqual(Array.from(downloaded2.subarray(0, 4)), [0xde, 0xad, 0xbe, 0xef]);
+    assert.equal(downloaded2[0x2001], 0x42);
     const exported2Info = await client.eval(`({
       len: window.__capturedSavs[1].length,
       head: window.__capturedSavs[1].slice(0, 4),
