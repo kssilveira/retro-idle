@@ -27,6 +27,7 @@
   - [open-chrome.sh](open-chrome.sh) — launches `google-chrome` with `--remote-debugging-port=${2:-9222}` and persistent profile `${XDG_CACHE_HOME:-$HOME/.cache}/retro-idle-chrome`.
   - [scripts/build-mgba.sh](scripts/build-mgba.sh) — builds single-threaded [vendor/mgba/mgba.js](vendor/mgba/mgba.js) and [vendor/mgba/mgba.wasm](vendor/mgba/mgba.wasm) from mGBA `0.10.5` via Emscripten.
   - [scripts/generate-demo-gif.mjs](scripts/generate-demo-gif.mjs) — generates [docs/autofight-demo.gif](docs/autofight-demo.gif) using the real UI shell and `autofight.js` state machine with 100% original placeholder pixel art (zero commercial ROM assets).
+  - [video/](video/) — reusable CDP 4-game capture script ([video/record-autofight.mjs](video/record-autofight.mjs)) outputting raw gameplay `.mp4` captures strictly outside the repo (`~/Downloads/retro-idle-recordings/`).
 - **GitHub Pages deployment:** Empty [.nojekyll](.nojekyll) at repo root serves static files directly from `main` (`/ (root)`) at `https://kssilveira.github.io/retro-idle/` without Jekyll processing. Keep module/asset paths in `index.html` relative (`./autofight.js`, `./vendor/binjgb/...`, `./vendor/mgba/...`) for subpath hosting; `IndexedDB` (`retro-idle`) and `localStorage` (`retro-idle:unload`) are already namespaced for the shared `kssilveira.github.io` origin, and both `binjgb` and single-threaded `mGBA` require no COOP/COEP headers.
 
 ---
