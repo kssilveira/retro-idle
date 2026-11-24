@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="#0b1120" />
+  <rect x="34" y="34" width="444" height="444" rx="94" fill="none" stroke="#1e293b" stroke-width="14" />
+  <!-- Classic handheld screen frame -->
+  <rect x="96" y="88" width="320" height="224" rx="28" fill="#88c070" />
+  <rect x="120" y="112" width="272" height="176" rx="12" fill="#e0f8d0" />
+  <!-- Subtle pixel accents inside screen -->
+  <rect x="148" y="140" width="48" height="48" rx="6" fill="#306850" opacity="0.22" />
+  <rect x="216" y="140" width="144" height="20" rx="6" fill="#306850" opacity="0.18" />
+  <rect x="216" y="172" width="104" height="16" rx="6" fill="#306850" opacity="0.14" />
+  <rect x="148" y="220" width="212" height="40" rx="8" fill="#0f172a" opacity="0.12" />
+  <!-- D-Pad -->
+  <rect x="108" y="376" width="96" height="32" rx="10" fill="#94a3b8" />
+  <rect x="140" y="344" width="32" height="96" rx="10" fill="#94a3b8" />
+  <circle cx="156" cy="392" r="9" fill="#0b1120" opacity="0.45" />
+  <!-- A / B Buttons -->
+  <circle cx="322" cy="404" r="24" fill="#64748b" />
+  <circle cx="384" cy="376" r="26" fill="#38bdf8" />
+</svg>

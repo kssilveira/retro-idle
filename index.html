@@ -25,7 +25,10 @@
   <meta name="twitter:image" content="https://kssilveira.github.io/retro-idle/docs/og-image.png" />
   <meta name="twitter:image:alt" content="retro-idle browser Game Boy and GBA emulator showing Auto-Fight battle gameplay with original pixel art" />
   <title>retro-idle — Game Boy &amp; GBA Emulator</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1120'/%3E%3Crect x='2' y='2' width='28' height='28' rx='6' fill='none' stroke='%231e293b' stroke-width='2'/%3E%3Crect x='6' y='6' width='20' height='15' rx='2' fill='%2388c070'/%3E%3Crect x='8' y='8' width='16' height='11' fill='%23e0f8d0'/%3E%3Ccircle cx='23' cy='25' r='2' fill='%2338bdf8'/%3E%3Crect x='7' y='24' width='6' height='2' rx='1' fill='%2394a3b8'/%3E%3Crect x='9' y='22' width='2' height='6' rx='1' fill='%2394a3b8'/%3E%3C/svg%3E" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png" />
   <style>
     :root {
       color-scheme: dark;
@@ -676,6 +679,15 @@
         height: 56px;
       }
     }
+
+    @media (display-mode: standalone) {
+      body {
+        padding-top: max(20px, env(safe-area-inset-top));
+        padding-right: max(20px, env(safe-area-inset-right));
+        padding-bottom: max(20px, env(safe-area-inset-bottom));
+        padding-left: max(20px, env(safe-area-inset-left));
+      }
+    }
   </style>
 </head>
 <body>
@@ -704,6 +716,7 @@
       <button type="button" id="mute-btn" class="active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
+      <button type="button" id="install-app-btn" hidden title="Install retro-idle as an app">Install App</button>
     </div>
 
     <div class="speed-controls" id="speed-controls" role="group" aria-label="Emulator speed">
@@ -883,6 +896,7 @@
     const muteBtn = document.getElementById('mute-btn');
     const touchPadBtn = document.getElementById('touch-pad-btn');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
+    const installAppBtn = document.getElementById('install-app-btn');
     const touchGamepadEl = document.getElementById('touch-gamepad');
     const touchDpadEl = document.getElementById('touch-dpad');
     const touchButtonElsByName = new Map();
@@ -3273,12 +3287,90 @@
       if (file) await loadRom(file, file.name, { persist: true });
     });
 
+    const standaloneMediaQuery = window.matchMedia('(display-mode: standalone)');
+    let deferredInstallPrompt = null;
+    let swRegistration = null;
+    let launchedViaFileHandler = false;
+    let pendingLaunchHandle = null;
+
+    function isStandalonePwa() {
+      return standaloneMediaQuery.matches || window.navigator.standalone === true;
+    }
+
+    function syncInstallButton() {
+      installAppBtn.hidden = isStandalonePwa() || !deferredInstallPrompt;
+    }
+
+    async function promptInstall() {
+      if (!deferredInstallPrompt) {
+        return { outcome: 'unavailable' };
+      }
+      const promptEvent = deferredInstallPrompt;
+      deferredInstallPrompt = null;
+      syncInstallButton();
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+      return choice || { outcome: 'dismissed' };
+    }
+
+    installAppBtn.addEventListener('click', () => {
+      promptInstall().catch(() => {});
+      blurActiveElement();
+    });
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      syncInstallButton();
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      syncInstallButton();
+    });
+
+    if (typeof standaloneMediaQuery.addEventListener === 'function') {
+      standaloneMediaQuery.addEventListener('change', syncInstallButton);
+    }
+
+    if ('launchQueue' in window && typeof window.launchQueue.setConsumer === 'function') {
+      window.launchQueue.setConsumer(async (launchParams) => {
+        const handle = launchParams?.files?.[0];
+        if (!handle) return;
+        launchedViaFileHandler = true;
+        if (binjgb) {
+          const file = await handle.getFile();
+          await loadRom(file, file.name, { persist: true });
+        } else {
+          pendingLaunchHandle = handle;
+        }
+      });
+    }
+
+    async function registerServiceWorker() {
+      if (!('serviceWorker' in navigator)) return null;
+      const isSecureLocal =
+        location.protocol === 'https:' ||
+        location.hostname === 'localhost' ||
+        location.hostname === '127.0.0.1' ||
+        location.hostname === '[::1]';
+      if (!isSecureLocal) return null;
+      try {
+        swRegistration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+        return swRegistration;
+      } catch {
+        return null;
+      }
+    }
+
     const initialPrefs = loadUiPrefs();
     persistedAutoFightRomId = initialPrefs.autoFightRomId;
     setSpeed(initialPrefs.speed, { persist: false });
     setMuted(initialPrefs.muted, { persist: false });
     setTouchControlsOverride(initialPrefs.touchPad, { persist: false });
     syncMiniPlayerButton();
+    syncInstallButton();
+    registerServiceWorker();
 
     try {
       binjgb = await Binjgb({ locateFile: (path) => `./vendor/binjgb/${path}` });
@@ -3288,11 +3380,22 @@
       throw err;
     }
 
-    dbGet(LAST_ROM_KEY).then((record) => {
-      if (record?.bytes && record?.name && !emu) {
-        loadRom(new File([record.bytes], record.name), record.name, { restoreAutoFight: true });
+    if (pendingLaunchHandle) {
+      const handle = pendingLaunchHandle;
+      pendingLaunchHandle = null;
+      try {
+        const file = await handle.getFile();
+        await loadRom(file, file.name, { persist: true });
+      } catch (err) {
+        statusEl.textContent = `Error loading file: ${err?.message || err}`;
       }
-    });
+    } else if (!launchedViaFileHandler) {
+      dbGet(LAST_ROM_KEY).then((record) => {
+        if (record?.bytes && record?.name && !emu) {
+          loadRom(new File([record.bytes], record.name), record.name, { restoreAutoFight: true });
+        }
+      });
+    }
 
     window.__retroIdle = {
       getEmulator: () => emu,
@@ -3344,6 +3447,16 @@
         start: startAutoA,
         stop: stopAutoA,
         toggle: toggleAutoA,
+      }),
+      getPwa: () => ({
+        standalone: isStandalonePwa(),
+        canInstall: Boolean(deferredInstallPrompt),
+        installButtonVisible: !installAppBtn.hidden,
+        swSupported: 'serviceWorker' in navigator,
+        swRegistered: Boolean(swRegistration),
+        swScope: swRegistration?.scope ?? null,
+        swControlled: Boolean(navigator.serviceWorker?.controller),
+        promptInstall,
       }),
     };
   </script>

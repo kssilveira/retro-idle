@@ -2813,6 +2813,179 @@ async function main() {
       assert.equal(switchState.wramBank2Byte, 0x5a, `${expectedTitle}: CPU failed to write 0x5A to 0xC000`);
     }
 
+    // PWA checks: manifest, icons, Service Worker precache, install prompt UI, and offline playback (GB + GBA)
+    await waitFor(
+      async () =>
+        await client.eval(`Boolean(window.__retroIdle?.getPwa?.().swRegistered && window.__retroIdle?.getPwa?.().swControlled)`),
+      10000,
+      100
+    );
+
+    const pwaMeta = await client.eval(`(async () => {
+      await navigator.serviceWorker.ready;
+      const manifestHref = document.querySelector('link[rel="manifest"]')?.getAttribute('href');
+      const appleTouchHref = document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href');
+      const manifestRes = await fetch('./manifest.webmanifest');
+      const manifest = await manifestRes.json();
+      const iconUrls = [...new Set([
+        ...manifest.icons.map((i) => i.src),
+        './icons/apple-touch-icon.png',
+      ])];
+      const iconStatuses = [];
+      for (const url of iconUrls) {
+        const r = await fetch(url);
+        const buf = await r.arrayBuffer();
+        iconStatuses.push({ url, status: r.status, bytes: buf.byteLength });
+      }
+      const cacheNames = await caches.keys();
+      const cache = await caches.open('retro-idle-v1');
+      const cachedReqs = await cache.keys();
+      const cachedPaths = cachedReqs.map((r) => new URL(r.url).pathname);
+      return {
+        pwa: window.__retroIdle.getPwa(),
+        manifestHref,
+        appleTouchHref,
+        manifestStatus: manifestRes.status,
+        manifest,
+        iconStatuses,
+        cacheNames,
+        cachedPaths,
+      };
+    })()`);
+
+    assert.equal(pwaMeta.manifestHref, './manifest.webmanifest', 'Expected relative manifest link');
+    assert.equal(pwaMeta.appleTouchHref, './icons/apple-touch-icon.png', 'Expected relative apple-touch-icon link');
+    assert.equal(pwaMeta.manifestStatus, 200, 'Manifest fetch should succeed with HTTP 200');
+    assert.equal(pwaMeta.manifest.id, './', 'Manifest id should be ./');
+    assert.equal(pwaMeta.manifest.start_url, './', 'Manifest start_url should be ./');
+    assert.equal(pwaMeta.manifest.scope, './', 'Manifest scope should be ./');
+    assert.equal(pwaMeta.manifest.display, 'standalone', 'Manifest display should be standalone');
+    assert.ok(Array.isArray(pwaMeta.manifest.file_handlers) && pwaMeta.manifest.file_handlers.length > 0, 'Expected file_handlers in manifest');
+    for (const icon of pwaMeta.manifest.icons) {
+      assert.ok(icon.purpose === 'any' || icon.purpose === 'maskable', `Icon purpose should be separate any or maskable, got ${icon.purpose}`);
+    }
+    for (const ic of pwaMeta.iconStatuses) {
+      assert.equal(ic.status, 200, `Icon ${ic.url} should return HTTP 200`);
+      assert.ok(ic.bytes > 0, `Icon ${ic.url} should be non-empty`);
+    }
+    assert.ok(pwaMeta.cacheNames.includes('retro-idle-v1'), 'Expected retro-idle-v1 cache');
+    for (const expectedPath of [
+      '/',
+      '/index.html',
+      '/autofight.js',
+      '/manifest.webmanifest',
+      '/vendor/binjgb/binjgb.js',
+      '/vendor/binjgb/binjgb.wasm',
+      '/vendor/mgba/mgba.js',
+      '/vendor/mgba/mgba.wasm',
+      '/icons/icon.svg',
+      '/icons/icon-192.png',
+      '/icons/icon-512.png',
+      '/icons/icon-maskable-192.png',
+      '/icons/icon-maskable-512.png',
+      '/icons/apple-touch-icon.png',
+    ]) {
+      assert.ok(
+        pwaMeta.cachedPaths.includes(expectedPath),
+        `Expected ${expectedPath} in retro-idle-v1 cache, got ${JSON.stringify(pwaMeta.cachedPaths)}`
+      );
+    }
+
+    // Install prompt UI check
+    const installCheck = await client.eval(`(async () => {
+      const btn = document.getElementById('install-app-btn');
+      const initialPwa = window.__retroIdle.getPwa();
+      const initialConsistent = btn.hidden === (initialPwa.standalone || !initialPwa.canInstall);
+      window.__mockPromptCalled = false;
+      const ev = new Event('beforeinstallprompt', { cancelable: true });
+      ev.prompt = () => {
+        window.__mockPromptCalled = true;
+        return Promise.resolve();
+      };
+      ev.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+      window.dispatchEvent(ev);
+      const canInstallAfterEvent = window.__retroIdle.getPwa().canInstall;
+      const visibleAfterEvent = !btn.hidden;
+      btn.click();
+      await new Promise((r) => setTimeout(r, 30));
+      return {
+        initialConsistent,
+        realPromptFired: initialPwa.canInstall,
+        canInstallAfterEvent,
+        visibleAfterEvent,
+        promptCalled: window.__mockPromptCalled,
+        hiddenAfterClick: btn.hidden,
+        canInstallAfterClick: window.__retroIdle.getPwa().canInstall,
+      };
+    })()`);
+    assert.equal(installCheck.initialConsistent, true, '#install-app-btn visibility should match canInstall state');
+    assert.equal(installCheck.canInstallAfterEvent, true, 'canInstall should be true after beforeinstallprompt');
+    assert.equal(installCheck.visibleAfterEvent, true, '#install-app-btn should be visible after beforeinstallprompt');
+    assert.equal(installCheck.promptCalled, true, 'Clicking #install-app-btn should invoke deferred prompt()');
+    assert.equal(installCheck.hiddenAfterClick, true, '#install-app-btn should hide after prompt');
+    assert.equal(installCheck.canInstallAfterClick, false, 'canInstall should clear after prompt');
+
+    // True offline playback check (GB auto-resume + GBA load from SW cache)
+    await client.send('Network.enable');
+    await client.send('Network.emulateNetworkConditions', {
+      offline: true,
+      latency: 0,
+      downloadThroughput: 0,
+      uploadThroughput: 0,
+    });
+    try {
+      await client.eval(`window.__beforeReload = true`);
+      await client.send('Page.reload', { ignoreCache: false });
+      await waitFor(
+        async () =>
+          await client.eval(
+            `window.__beforeReload === undefined && Boolean(window.__retroIdle?.getEmulator?.()?.isPlaying) && ${HAS_NON_BLANK_CANVAS_EXPR} && (document.getElementById('status')?.textContent || '').includes('MBC3 TEST')`
+          ),
+        12000,
+        100
+      );
+      const offlineGbState = await client.eval(`({
+        status: document.getElementById('status').textContent,
+        swControlled: window.__retroIdle.getPwa().swControlled,
+        onLine: navigator.onLine,
+      })`);
+      assert.equal(offlineGbState.swControlled, true, 'SW should control page during offline reload');
+
+      const offlineDoc = await client.send('DOM.getDocument');
+      const offlineInput = await client.send('DOM.querySelector', {
+        nodeId: offlineDoc.root.nodeId,
+        selector: '#rom-input',
+      });
+      await client.send('DOM.setFileInputFiles', {
+        nodeId: offlineInput.nodeId,
+        files: [GBA_ROM_PATH],
+      });
+      await waitFor(
+        async () =>
+          await client.eval(
+            `Boolean(window.__retroIdle?.getEmulator?.()?.isPlaying) && ${HAS_NON_BLANK_CANVAS_EXPR} && (document.getElementById('status')?.textContent || '').includes('GBA TEST')`
+          ),
+        12000,
+        100
+      );
+      const offlineGbaStatus = await client.eval(`document.getElementById('status').textContent`);
+      var pwaCheck = {
+        swRegistered: pwaMeta.pwa.swRegistered,
+        swControlled: offlineGbState.swControlled,
+        cachedCount: pwaMeta.cachedPaths.length,
+        installPromptTested: installCheck.promptCalled,
+        offlineGbStatus: offlineGbState.status,
+        offlineGbaStatus,
+      };
+    } finally {
+      await client.send('Network.emulateNetworkConditions', {
+        offline: false,
+        latency: 0,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+      });
+    }
+
     // Assert zero runtime exceptions, zero console errors, zero Log.entryAdded errors
     const errors = client.events.filter(
       (e) =>
@@ -2892,6 +3065,7 @@ async function main() {
         mobileScreenshot: MOBILE_SCREENSHOT_PATH,
         landscapeScreenshot: MOBILE_LANDSCAPE_SCREENSHOT_PATH,
       },
+      pwaCheck,
       screenshot: SCREENSHOT_PATH,
     });
   } finally {
