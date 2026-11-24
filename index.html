@@ -73,6 +73,15 @@
       transition: outline-color 120ms ease;
     }
 
+    @media (display-mode: standalone) {
+      body {
+        padding-top: max(20px, env(safe-area-inset-top));
+        padding-right: max(20px, env(safe-area-inset-right));
+        padding-bottom: max(20px, env(safe-area-inset-bottom));
+        padding-left: max(20px, env(safe-area-inset-left));
+      }
+    }
+
     button,
     .file-label,
     .touch-gamepad,
@@ -518,6 +527,42 @@
       }
     }
 
+    body.touch-controls-visible h1 {
+      order: 1;
+    }
+
+    body.touch-controls-visible .screen-slot {
+      order: 2;
+    }
+
+    body.touch-controls-visible #status {
+      order: 3;
+    }
+
+    body.touch-controls-visible #auto-fight-status {
+      order: 4;
+    }
+
+    body.touch-controls-visible #heal-center-status {
+      order: 5;
+    }
+
+    body.touch-controls-visible .touch-gamepad {
+      order: 6;
+    }
+
+    body.touch-controls-visible .speed-controls {
+      order: 7;
+    }
+
+    body.touch-controls-visible .controls {
+      order: 8;
+    }
+
+    body.touch-controls-visible .legend {
+      order: 9;
+    }
+
     @media (max-width: 768px), (pointer: coarse) {
       body {
         padding:
@@ -677,15 +722,6 @@
       body.touch-controls-visible .gb-action-btn {
         width: 56px;
         height: 56px;
-      }
-    }
-
-    @media (display-mode: standalone) {
-      body {
-        padding-top: max(20px, env(safe-area-inset-top));
-        padding-right: max(20px, env(safe-area-inset-right));
-        padding-bottom: max(20px, env(safe-area-inset-bottom));
-        padding-left: max(20px, env(safe-area-inset-left));
       }
     }
   </style>

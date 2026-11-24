@@ -1964,6 +1964,10 @@ async function main() {
       muteBtnText: document.getElementById('mute-btn').textContent,
       muteBtnActive: document.getElementById('mute-btn').classList.contains('active'),
       muteBtnPressed: document.getElementById('mute-btn').getAttribute('aria-pressed'),
+      screenRect: document.getElementById('screen').getBoundingClientRect().toJSON(),
+      gamepadRect: document.getElementById('touch-gamepad').getBoundingClientRect().toJSON(),
+      speedRect: document.querySelector('.speed-controls').getBoundingClientRect().toJSON(),
+      controlsRect: document.querySelector('.controls').getBoundingClientRect().toJSON(),
     })`);
     assert.equal(prefsAfterReload1.speed, 4, 'Speed 4x must persist across refresh');
     assert.equal(prefsAfterReload1.emuSpeed, 4, 'Emulator speed must restore to 4x on refresh');
@@ -1974,6 +1978,18 @@ async function main() {
     assert.equal(prefsAfterReload1.touchBtnActive, true);
     assert.equal(prefsAfterReload1.touchBtnPressed, 'true');
     assert.equal(prefsAfterReload1.bodyTouchClass, true);
+    assert.ok(
+      prefsAfterReload1.gamepadRect.top >= prefsAfterReload1.screenRect.bottom - 2,
+      `Desktop Touch Pad must appear below screen (${prefsAfterReload1.gamepadRect.top} >= ${prefsAfterReload1.screenRect.bottom})`
+    );
+    assert.ok(
+      prefsAfterReload1.gamepadRect.bottom <= prefsAfterReload1.speedRect.top + 2,
+      `Desktop Touch Pad must appear above speed controls (${prefsAfterReload1.gamepadRect.bottom} <= ${prefsAfterReload1.speedRect.top})`
+    );
+    assert.ok(
+      prefsAfterReload1.gamepadRect.bottom <= prefsAfterReload1.controlsRect.top + 2,
+      `Desktop Touch Pad must appear above toolbar controls (${prefsAfterReload1.gamepadRect.bottom} <= ${prefsAfterReload1.controlsRect.top})`
+    );
     assert.equal(prefsAfterReload1.autoFightActive, true, 'Auto-Fight ON must persist across refresh');
     assert.equal(prefsAfterReload1.autoFightBtnActive, true);
     assert.equal(prefsAfterReload1.autoFightBtnPressed, 'true');
