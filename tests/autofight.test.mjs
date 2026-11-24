@@ -8,6 +8,9 @@ import {
   POKEMON_EMERALD_MEM,
   POKEMON_RED_BLUE_MEM,
   POKEMON_YELLOW_MEM,
+  TURBO_A_OFF_FRAMES,
+  TURBO_A_ON_FRAMES,
+  createAutoA,
   createAutoFight,
   decodeGen3Char,
   decodeGen3String,
@@ -2613,4 +2616,156 @@ test('Emerald MoveSaveBlocks_ResetHeap transitions hold neutral and do not trigg
   assert.equal(res.active, false);
   assert.equal(res.stopReason, 'map changed');
   assert.deepEqual(res.buttons, NEUTRAL_BUTTONS);
+});
+
+test('createAutoA pulses 3 frames on / 3 frames off for non-Pokemon ROMs (snap = null) and stops cleanly', () => {
+  assert.equal(TURBO_A_ON_FRAMES, 3);
+  assert.equal(TURBO_A_OFF_FRAMES, 3);
+
+  const autoA = createAutoA();
+  assert.deepEqual(autoA.getState(), { active: false, stopReason: null });
+  assert.deepEqual(autoA.step(null), { active: false, a: false, stopReason: null });
+
+  autoA.start(null);
+  assert.deepEqual(autoA.getState(), { active: true, stopReason: null });
+
+  const pattern = [];
+  for (let i = 0; i < 12; i++) {
+    const res = autoA.step(null);
+    assert.equal(res.active, true);
+    assert.equal(res.stopReason, null);
+    pattern.push(res.a);
+  }
+  assert.deepEqual(pattern, [
+    true, true, true, false, false, false,
+    true, true, true, false, false, false,
+  ]);
+
+  const stopped = autoA.stop('manual');
+  assert.deepEqual(stopped, { active: false, a: false, stopReason: 'manual' });
+  assert.deepEqual(autoA.getState(), { active: false, stopReason: 'manual' });
+  assert.deepEqual(autoA.step(null), { active: false, a: false, stopReason: 'manual' });
+});
+
+test('createAutoA shares move-learning and fainting safety guards without stopping on trainer battles, map changes, low HP, or evolution', () => {
+  const autoA = createAutoA();
+
+  // Allows trainer battles (isInBattle: 2), low HP, out of PP, map changes, and evolution cutscenes
+  autoA.start(makeSnapshot({ isInBattle: 0, map: 12 }));
+  assert.equal(autoA.step(makeSnapshot({ isInBattle: 0, map: 99 })).active, true);
+  assert.equal(
+    autoA.step(
+      makeSnapshot({
+        isInBattle: 2,
+        battleMon: { hp: 1, maxHp: 50, level: 9, moves: [10, 0, 0, 0], pp: [0, 0, 0, 0] },
+      })
+    ).active,
+    true
+  );
+  assert.equal(
+    autoA.step(makeSnapshot({ isInBattle: 0, inCutscene: true, menuBoxText: 'What? CHARMANDER is evolving!' })).active,
+    true
+  );
+
+  // Does NOT false-stop on generic overworld NPC text containing "learn" or "trying"
+  assert.equal(
+    autoA.step(makeSnapshot({ isInBattle: 0, menuBoxText: 'Want to learn about Poke Balls?' })).active,
+    true
+  );
+  assert.equal(
+    autoA.step(makeSnapshot({ isInBattle: 0, menuBoxText: "I'm trying to find my hat" })).active,
+    true
+  );
+
+  // Overworld wrapped move-learning prompts stop immediately on the exact frame (a: false)
+  for (const text of [
+    'is trying to\nlearn EMBER!',
+    'Delete an older\nmove?',
+    'Stop learning EMBER?',
+    'Abandon learning EMBER?',
+  ]) {
+    autoA.start(makeSnapshot({ isInBattle: 0 }));
+    const res = autoA.step(makeSnapshot({ isInBattle: 0, menuBoxText: text }));
+    assert.deepEqual(res, { active: false, a: false, stopReason: 'learning a move' });
+  }
+
+  // Wild battle, trainer battle, and Emerald inLearnPrompt flag all stop immediately
+  for (const snap of [
+    makeSnapshot({ isInBattle: 1, menuBoxText: 'CHARMANDER learned EMBER!' }),
+    makeSnapshot({ isInBattle: 2, menuBoxText: 'Delete a move to make room?' }),
+    makeSnapshot({ isInBattle: 2, inLearnPrompt: true, menuBoxText: '' }),
+  ]) {
+    autoA.start(makeSnapshot({ isInBattle: 0 }));
+    const res = autoA.step(snap);
+    assert.deepEqual(res, { active: false, a: false, stopReason: 'learning a move' });
+  }
+
+  // Ignores stale battleMon hp=0 before battleMonReady, then stops on fainting in wild & trainer battles and blackout
+  for (const battleMode of [1, 2]) {
+    autoA.start(makeSnapshot({ isInBattle: 0 }));
+    const preSendOut = makeSnapshot({
+      isInBattle: battleMode,
+      battleMon: { hp: 0, maxHp: 0, level: 0, moves: [0, 0, 0, 0], pp: [0, 0, 0, 0] },
+    });
+    assert.equal(autoA.step(preSendOut).active, true);
+
+    const readyMon = makeSnapshot({
+      isInBattle: battleMode,
+      battleMon: { hp: 20, maxHp: 20, level: 9, moves: [10, 0, 0, 0], pp: [35, 0, 0, 0] },
+    });
+    assert.equal(autoA.step(readyMon).active, true);
+
+    const faintedMon = makeSnapshot({
+      isInBattle: battleMode,
+      battleMon: { hp: 0, maxHp: 20, level: 9, moves: [10, 0, 0, 0], pp: [35, 0, 0, 0] },
+    });
+    assert.deepEqual(autoA.step(faintedMon), { active: false, a: false, stopReason: 'fainted' });
+  }
+
+  autoA.start(makeSnapshot({ isInBattle: 0 }));
+  assert.deepEqual(autoA.step(makeSnapshot({ isInBattle: 0xff })), {
+    active: false,
+    a: false,
+    stopReason: 'fainted',
+  });
+});
+
+test('readPokemonEmeraldSnapshot detects move-learning prompt and battle text during trainer battles', () => {
+  const profile = getAutoFightProfile('POKEMON EMER', 'BPEE');
+  const em = createEmeraldMemory();
+  const mem = em.mem;
+
+  em.write8(mem.gPlayerPartyCount, 1);
+  em.writePartyMon(0, {
+    personality: 4,
+    otId: 0x05060708,
+    species: 277,
+    hp: 21,
+    maxHp: 21,
+    level: 6,
+    moves: [1, 0, 0, 0],
+    pp: [35, 0, 0, 0],
+  });
+  em.setOverworld({ mapGroup: 0, mapNumber: 16, x: 5, y: 5, inBattle: 1, cb2: 0x08036fac });
+  em.write32(mem.gBattleTypeFlags, 1 << 3); // BATTLE_TYPE_TRAINER
+  em.writeBattleMon({
+    species: 277,
+    hp: 21,
+    maxHp: 21,
+    level: 6,
+    moves: [1, 0, 0, 0],
+    pp: [35, 0, 0, 0],
+  });
+  em.writeGen3Text(mem.gDisplayedStringBattle, 'Delete a move?');
+  em.write32(mem.gBattlescriptCurrInstr, mem.battleScriptAskToLearnMoveStart + 4);
+
+  const snap = profile.readSnapshot(em.readMem);
+  assert.equal(snap.isInBattle, 2);
+  assert.equal(snap.inLearnPrompt, true);
+  assert.match(snap.menuBoxText, /Delete a move\?/);
+  assert.match(snap.menuBoxText, /trying to learn/);
+
+  const autoA = createAutoA();
+  autoA.start(snap);
+  assert.deepEqual(autoA.step(snap), { active: false, a: false, stopReason: 'learning a move' });
 });

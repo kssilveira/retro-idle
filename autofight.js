@@ -24,7 +24,12 @@ export const NON_ATTACK_MOVES = new Set([
   339, 346, 347, 349,
 ]);
 
+export const TURBO_A_ON_FRAMES = 3;
+export const TURBO_A_OFF_FRAMES = 3;
+
 const LEARN_PROMPT_RE = /\blearn|trying to|Delete an?|forgotten/;
+const OVERWORLD_LEARN_PROMPT_RE =
+  /trying\s+to\s+learn|Delete\s+an?\s+older|Stop\s+learning|Abandon\s+learning/i;
 const DIRS = ['right', 'left', 'up', 'down'];
 const TILE_CURSOR = 0xed;
 const MOVE_FIRST_ROW = 13;
@@ -795,13 +800,14 @@ export function readPokemonEmeraldSnapshot(readMem, mem = POKEMON_EMERALD_MEM) {
   const cb2 = (r32(mem.gMain + 0x04) & ~1) >>> 0;
   const inLearnCb = cb2 === mem.cb2InitLearnMove;
   const instr = r32(mem.gBattlescriptCurrInstr);
+  const inActiveBattle = pos.isInBattle === 1 || pos.isInBattle === 2;
   const inLearnScript =
-    pos.isInBattle === 1 &&
+    inActiveBattle &&
     instr >= mem.battleScriptAskToLearnMoveStart &&
     instr < mem.battleScriptAskToLearnMoveEnd;
 
   const textParts = [];
-  if (pos.isInBattle === 1 || pos.inCutscene || inLearnCb) {
+  if (inActiveBattle || pos.inCutscene || inLearnCb) {
     const battleText = decodeGen3String(r, mem.gDisplayedStringBattle, 160);
     if (battleText) textParts.push(battleText);
   }
@@ -823,6 +829,7 @@ export function readPokemonEmeraldSnapshot(readMem, mem = POKEMON_EMERALD_MEM) {
     moveCursor,
     menuBoxRows: [],
     menuBoxText: textParts.join(' '),
+    inLearnPrompt: Boolean(inLearnCb || inLearnScript),
     fightPos,
     runPos,
     hasRun,
@@ -914,6 +921,10 @@ function isLowHp(mon) {
       mon.hp > 0 &&
       mon.hp * LOW_HP_DENOMINATOR <= mon.maxHp * LOW_HP_NUMERATOR
   );
+}
+
+function isBattleMonReady(mon) {
+  return Boolean(mon && mon.maxHp > 0 && mon.hp > 0 && mon.moves?.[0] !== 0);
 }
 
 /** Return the missing-path stop reason if a Pokemon needs healing (out of PP or low HP). */
@@ -1698,9 +1709,7 @@ export function createAutoFight() {
 
     if (
       !battleMonReady &&
-      snap.battleMon.maxHp > 0 &&
-      snap.battleMon.hp > 0 &&
-      snap.battleMon.moves[0] !== 0
+      isBattleMonReady(snap.battleMon)
     ) {
       battleMonReady = true;
     }
@@ -1800,6 +1809,102 @@ export function createAutoFight() {
       ),
       trailLength: trail.length,
       healSubphase,
+    }),
+  };
+}
+
+/** Create a frame-locked Auto A controller with shared Pokémon move-learning & fainting guards. */
+export function createAutoA({
+  onFrames = TURBO_A_ON_FRAMES,
+  offFrames = TURBO_A_OFF_FRAMES,
+} = {}) {
+  let active = false;
+  let stopReason = null;
+  let frameCounter = 0;
+  let wasInBattle = false;
+  let battleMonReady = false;
+
+  function stop(reason = 'manual') {
+    active = false;
+    stopReason = reason;
+    frameCounter = 0;
+    wasInBattle = false;
+    battleMonReady = false;
+    return {
+      active: false,
+      a: false,
+      stopReason: reason,
+    };
+  }
+
+  function start(snap = null) {
+    active = true;
+    stopReason = null;
+    frameCounter = 0;
+    const inBattle = Boolean(snap && (snap.isInBattle === 1 || snap.isInBattle === 2));
+    wasInBattle = inBattle;
+    battleMonReady = inBattle && isBattleMonReady(snap?.battleMon);
+  }
+
+  function step(snap = null) {
+    if (!active) {
+      return {
+        active: false,
+        a: false,
+        stopReason,
+      };
+    }
+
+    if (snap) {
+      const inBattle = snap.isInBattle === 1 || snap.isInBattle === 2;
+      const text = snap.menuBoxText || '';
+      const isLearning =
+        Boolean(snap.inLearnPrompt) ||
+        (inBattle || snap.inCutscene
+          ? LEARN_PROMPT_RE.test(text)
+          : OVERWORLD_LEARN_PROMPT_RE.test(text));
+      if (isLearning) {
+        return stop('learning a move');
+      }
+
+      if (snap.isInBattle === 0xff) {
+        return stop('fainted');
+      }
+
+      if (!inBattle) {
+        wasInBattle = false;
+        battleMonReady = false;
+      } else {
+        if (!wasInBattle) {
+          wasInBattle = true;
+          battleMonReady = false;
+        }
+        if (!battleMonReady && isBattleMonReady(snap.battleMon)) {
+          battleMonReady = true;
+        }
+        if (battleMonReady && snap.battleMon?.hp === 0) {
+          return stop('fainted');
+        }
+      }
+    }
+
+    const period = onFrames + offFrames;
+    const a = frameCounter < onFrames;
+    frameCounter = (frameCounter + 1) % period;
+    return {
+      active: true,
+      a,
+      stopReason: null,
+    };
+  }
+
+  return {
+    start,
+    stop,
+    step,
+    getState: () => ({
+      active,
+      stopReason,
     }),
   };
 }

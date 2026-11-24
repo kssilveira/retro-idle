@@ -294,6 +294,121 @@ async function main() {
       return await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`);
     }, 5000, 30);
 
+    // Turbo A (KeyC) & Auto A (#auto-a-btn / KeyV / Escape) on non-Pokémon ROM
+    const sampleBgpBothStatesExpr = `new Promise((resolve) => {
+      const seen = new Set();
+      let frames = 0;
+      const tick = () => {
+        seen.add(window.__retroIdle.getEmulator().readMem(0xff47));
+        frames += 1;
+        if ((seen.has(0x1b) && seen.has(0xe4)) || frames >= 45) {
+          resolve({ has1b: seen.has(0x1b), hasE4: seen.has(0xe4), frames });
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })`;
+
+    const initialAutoABtns = await client.eval(`({
+      autoADisabled: document.getElementById('auto-a-btn').disabled,
+      autoFightDisabled: document.getElementById('auto-fight-btn').disabled,
+    })`);
+    assert.equal(initialAutoABtns.autoADisabled, false, 'Auto A button must be enabled for non-Pokémon ROMs');
+    assert.equal(initialAutoABtns.autoFightDisabled, true, 'Auto-Fight button must stay disabled for non-Pokémon ROMs');
+
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'c',
+      code: 'KeyC',
+      windowsVirtualKeyCode: 67,
+      nativeVirtualKeyCode: 67,
+    });
+    const turboKeySample = await client.eval(sampleBgpBothStatesExpr);
+    assert.equal(turboKeySample.has1b && turboKeySample.hasE4, true, `KeyC Turbo A should pulse BGP: ${JSON.stringify(turboKeySample)}`);
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'c',
+      code: 'KeyC',
+      windowsVirtualKeyCode: 67,
+      nativeVirtualKeyCode: 67,
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4 && !window.__retroIdle.getAutoA().turboHeld`),
+      5000,
+      30
+    );
+
+    await client.eval(`document.getElementById('auto-a-btn').click()`);
+    const autoAActiveInfo = await client.eval(`({
+      ...window.__retroIdle.getAutoA(),
+      btnText: document.getElementById('auto-a-btn').textContent,
+      btnActive: document.getElementById('auto-a-btn').classList.contains('active'),
+      statusText: document.getElementById('auto-fight-status').textContent,
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(autoAActiveInfo.active, true);
+    assert.equal(autoAActiveInfo.btnText, 'Stop Auto A');
+    assert.equal(autoAActiveInfo.btnActive, true);
+    assert.equal(autoAActiveInfo.statusText, 'Auto A: active');
+    assert.notEqual(autoAActiveInfo.activeTag, 'BUTTON', 'Auto A button must blur after click');
+
+    const autoASample = await client.eval(sampleBgpBothStatesExpr);
+    assert.equal(autoASample.has1b && autoASample.hasE4, true, `Auto A should pulse BGP: ${JSON.stringify(autoASample)}`);
+
+    // KeyV toggles off, KeyV toggles on, Escape stops Auto A cleanly
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'v',
+      code: 'KeyV',
+      windowsVirtualKeyCode: 86,
+      nativeVirtualKeyCode: 86,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'v',
+      code: 'KeyV',
+      windowsVirtualKeyCode: 86,
+      nativeVirtualKeyCode: 86,
+    });
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), false, 'KeyV should stop Auto A');
+
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'v',
+      code: 'KeyV',
+      windowsVirtualKeyCode: 86,
+      nativeVirtualKeyCode: 86,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'v',
+      code: 'KeyV',
+      windowsVirtualKeyCode: 86,
+      nativeVirtualKeyCode: 86,
+    });
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), true, 'Second KeyV should start Auto A');
+
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await waitFor(
+      async () => await client.eval(`!window.__retroIdle.getAutoA().active && window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4 && document.getElementById('auto-fight-status').hidden`),
+      5000,
+      30
+    );
+
     // Pause / Resume button test + focus blur verification
     await client.eval(`document.getElementById('toggle-play').click()`);
     await waitFor(
@@ -860,6 +975,37 @@ async function main() {
       const pipTicksEnd = await client.eval(`window.__retroIdle.getEmulator().getTicks()`);
       assert.ok(pipTicksEnd > pipTicksStart, 'Expected emulator ticks to advance under PiP requestAnimationFrame');
 
+      // PiP Auto A toggle syncs with main #auto-a-btn and status
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="auto-a"]').click()
+      `);
+      const pipAutoAOn = await client.eval(`(() => {
+        const w = window.__retroIdle.getMiniPlayer().getWindow();
+        const b = w.document.querySelector('[data-pip-action="auto-a"]');
+        return {
+          active: window.__retroIdle.getAutoA().active,
+          pipText: b.textContent,
+          pipActive: b.classList.contains('active'),
+          mainText: document.getElementById('auto-a-btn').textContent,
+          pipStatus: w.document.querySelector('.pip-status-primary').textContent,
+        };
+      })()`);
+      assert.equal(pipAutoAOn.active, true);
+      assert.equal(pipAutoAOn.pipText, 'Stop A');
+      assert.equal(pipAutoAOn.pipActive, true);
+      assert.equal(pipAutoAOn.mainText, 'Stop Auto A');
+      assert.equal(pipAutoAOn.pipStatus, 'Auto A: active');
+
+      await client.eval(`
+        window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="auto-a"]').click()
+      `);
+      assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), false, 'Second PiP Auto A click should stop Auto A');
+      await waitFor(
+        async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`),
+        5000,
+        30
+      );
+
       // PiP speed button cycles 1x -> 2x and syncs back to main UI; Digit1 in PiP restores 1x
       await client.eval(`
         window.__retroIdle.getMiniPlayer().getWindow().document.querySelector('[data-pip-action="speed"]').click()
@@ -1087,14 +1233,19 @@ async function main() {
         const rightRect = document.querySelector('[data-gb-btn="right"]').getBoundingClientRect();
         const upRect = document.querySelector('[data-gb-btn="up"]').getBoundingClientRect();
         const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+        const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
         return {
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
           screenVisible: screenRect.width > 100 && screenRect.height > 100,
           gamepadBottom: gamepadRect.bottom,
+          turboAWidth: turboARect.width,
+          turboAHeight: turboARect.height,
+          turboABottom: turboARect.bottom,
           rightCenter: { x: Math.round(rightRect.left + rightRect.width / 2), y: Math.round(rightRect.top + rightRect.height / 2) },
           upCenter: { x: Math.round(upRect.left + upRect.width / 2), y: Math.round(upRect.top + upRect.height / 2) },
           aCenter: { x: Math.round(aRect.left + aRect.width / 2), y: Math.round(aRect.top + aRect.height / 2) },
+          turboACenter: { x: Math.round(turboARect.left + turboARect.width / 2), y: Math.round(turboARect.top + turboARect.height / 2) },
         };
       })()
     `);
@@ -1104,13 +1255,18 @@ async function main() {
     );
     assert.equal(portraitLayout.screenVisible, true, 'Portrait screen must be visible');
     assert.ok(
-      portraitLayout.gamepadBottom <= 844,
+      portraitLayout.turboAWidth > 60 && portraitLayout.turboAHeight > 20,
+      `Portrait TURBO A button not visible: ${JSON.stringify(portraitLayout)}`
+    );
+    assert.ok(
+      Math.max(portraitLayout.gamepadBottom, portraitLayout.turboABottom) <= 844,
       `Portrait touch gamepad must fit within 844px height (bottom=${portraitLayout.gamepadBottom})`
     );
 
     const finger1Right = { x: portraitLayout.rightCenter.x, y: portraitLayout.rightCenter.y, id: 1 };
     const finger1Up = { x: portraitLayout.upCenter.x, y: portraitLayout.upCenter.y, id: 1 };
     const finger2A = { x: portraitLayout.aCenter.x, y: portraitLayout.aCenter.y, id: 2 };
+    const finger2TurboA = { x: portraitLayout.turboACenter.x, y: portraitLayout.turboACenter.y, id: 2 };
 
     // Finger 1 holds D-Pad right
     await client.send('Input.dispatchTouchEvent', {
@@ -1193,6 +1349,29 @@ async function main() {
       'All touch buttons must release on touchEnd'
     );
 
+    // Multi-touch D-Pad right + Touch TURBO A pulses BGP 0xFF47 between 0x1B and 0xE4
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [finger1Right, finger2TurboA],
+    });
+    const afterTouchTurbo = await client.eval(`({
+      held: window.__retroIdle.getTouchControls().held,
+      turboPressed: document.querySelector('[data-gb-btn="turboA"]').classList.contains('pressed'),
+    })`);
+    assert.deepEqual(afterTouchTurbo.held, ['right', 'turboA']);
+    assert.equal(afterTouchTurbo.turboPressed, true);
+    const touchTurboSample = await client.eval(sampleBgpBothStatesExpr);
+    assert.equal(touchTurboSample.has1b && touchTurboSample.hasE4, true, `Touch TURBO A should pulse BGP: ${JSON.stringify(touchTurboSample)}`);
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [],
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getTouchControls().held.length === 0 && window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`),
+      5000,
+      30
+    );
+
     const mobileShot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(MOBILE_SCREENSHOT_PATH, Buffer.from(mobileShot.data, 'base64'));
 
@@ -1210,6 +1389,7 @@ async function main() {
         const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
         const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
         const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+        const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
         return {
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
@@ -1221,12 +1401,19 @@ async function main() {
           dpadBottom: dpadRect.bottom,
           aBottom: aRect.bottom,
           startBottom: startRect.bottom,
+          turboAWidth: turboARect.width,
+          turboAHeight: turboARect.height,
+          turboABottom: turboARect.bottom,
         };
       })()
     `);
     assert.ok(
       landscapeLayout.scrollWidth <= landscapeLayout.innerWidth,
       `Landscape overflow: ${landscapeLayout.scrollWidth} > ${landscapeLayout.innerWidth}`
+    );
+    assert.ok(
+      landscapeLayout.turboAWidth > 60 && landscapeLayout.turboAHeight > 20,
+      `Landscape TURBO A button not visible: ${JSON.stringify(landscapeLayout)}`
     );
     assert.ok(
       landscapeLayout.dpadRight <= landscapeLayout.screenLeft + 8,
@@ -1241,7 +1428,8 @@ async function main() {
         landscapeLayout.screenBottom,
         landscapeLayout.dpadBottom,
         landscapeLayout.aBottom,
-        landscapeLayout.startBottom
+        landscapeLayout.startBottom,
+        landscapeLayout.turboABottom
       ) <= 390,
       `Landscape handheld controls must fit inside 390px height (${JSON.stringify(landscapeLayout)})`
     );
@@ -2186,6 +2374,7 @@ async function main() {
         const gamepadRect = document.getElementById('touch-gamepad').getBoundingClientRect();
         const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
         const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+        const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
         return {
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
@@ -2197,6 +2386,9 @@ async function main() {
           rWidth: rRect.width,
           rHeight: rRect.height,
           rBottom: rRect.bottom,
+          turboAWidth: turboARect.width,
+          turboAHeight: turboARect.height,
+          turboABottom: turboARect.bottom,
         };
       })()
     `);
@@ -2213,11 +2405,16 @@ async function main() {
       `GBA portrait R button not visible: ${JSON.stringify(gbaPortraitLayout)}`
     );
     assert.ok(
+      gbaPortraitLayout.turboAWidth > 60 && gbaPortraitLayout.turboAHeight > 20,
+      `GBA portrait TURBO A button not visible: ${JSON.stringify(gbaPortraitLayout)}`
+    );
+    assert.ok(
       Math.max(
         gbaPortraitLayout.screenBottom,
         gbaPortraitLayout.gamepadBottom,
         gbaPortraitLayout.lBottom,
-        gbaPortraitLayout.rBottom
+        gbaPortraitLayout.rBottom,
+        gbaPortraitLayout.turboABottom
       ) <= 844,
       `GBA portrait controls overflow 844px height (${JSON.stringify(gbaPortraitLayout)})`
     );
@@ -2236,6 +2433,7 @@ async function main() {
         const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
         const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
         const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+        const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
         return {
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
@@ -2253,6 +2451,9 @@ async function main() {
           rWidth: rRect.width,
           rHeight: rRect.height,
           rBottom: rRect.bottom,
+          turboAWidth: turboARect.width,
+          turboAHeight: turboARect.height,
+          turboABottom: turboARect.bottom,
         };
       })()
     `);
@@ -2269,6 +2470,10 @@ async function main() {
       `GBA landscape R button not visible: ${JSON.stringify(gbaLandscapeLayout)}`
     );
     assert.ok(
+      gbaLandscapeLayout.turboAWidth > 60 && gbaLandscapeLayout.turboAHeight > 20,
+      `GBA landscape TURBO A button not visible: ${JSON.stringify(gbaLandscapeLayout)}`
+    );
+    assert.ok(
       gbaLandscapeLayout.dpadRight <= gbaLandscapeLayout.screenLeft + 8,
       `Expected D-Pad left of GBA screen in landscape (${gbaLandscapeLayout.dpadRight} <= ${gbaLandscapeLayout.screenLeft})`
     );
@@ -2283,7 +2488,8 @@ async function main() {
         gbaLandscapeLayout.aBottom,
         gbaLandscapeLayout.startBottom,
         gbaLandscapeLayout.lBottom,
-        gbaLandscapeLayout.rBottom
+        gbaLandscapeLayout.rBottom,
+        gbaLandscapeLayout.turboABottom
       ) <= 390,
       `GBA landscape controls overflow 390px height (${JSON.stringify(gbaLandscapeLayout)})`
     );
@@ -2419,7 +2625,41 @@ async function main() {
     assert.equal(emeraldCheck.snapshot.party[0].moves[0], 1);
     assert.equal(emeraldCheck.snapshot.party[0].pp[0], 35);
 
-    // Inject BATTLE_TYPE_TRAINER (1 << 3) into EWRAM -> verify automatic Auto-Fight stop
+    // Start Auto A while exiting Oldale Heal Center -> stays active & keeps passive Heal Center trail tracking
+    await client.eval(`document.getElementById('auto-a-btn').click()`);
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), true);
+    assert.equal(
+      await client.eval(`document.getElementById('auto-fight-status').textContent`),
+      'Auto A: active (move-learn & faint guard)'
+    );
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        const mod = emu.module;
+        const w8 = (a, v) => mod._gba_write8(emu.e, a >>> 0, v & 0xff);
+        const w16 = (a, v) => mod._gba_write16(emu.e, a >>> 0, v & 0xffff);
+        const SB1 = 0x02025a48;
+        w16(0x02037318 + 0x12, 11);
+        w16(SB1 + 0x00, 6);
+        w16(SB1 + 0x02, 16);
+        w8(SB1 + 0x04, 0);
+        w8(SB1 + 0x05, 10);
+        w16(SB1 + 0x32, 11);
+        w16(0x02037350 + 0x10, 6 + 7);
+        w16(0x02037350 + 0x12, 16 + 7);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoFight().trailLength === 1 && window.__retroIdle.getAutoFight().hasHealPath === true`
+        ),
+      5000,
+      30
+    );
+
+    // Inject BATTLE_TYPE_TRAINER (1 << 3) into EWRAM -> Auto A stays active in trainer battle,
+    // then clicking Auto-Fight stops Auto A (mutual exclusion) and triggers automatic Auto-Fight stop
     await client.eval(`
       (() => {
         const emu = window.__retroIdle.getEmulator();
@@ -2438,11 +2678,14 @@ async function main() {
         w16(bBase + 0x2c, 21);
       })()
     `);
+    await sleep(120);
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), true, 'Auto A must stay active during trainer battle');
+
     await client.eval(`document.getElementById('auto-fight-btn').click()`);
     await waitFor(
       async () =>
         await client.eval(
-          `window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'trainer battle'`
+          `window.__retroIdle.getAutoA().active === false && window.__retroIdle.getAutoFight().active === false && window.__retroIdle.getAutoFight().stopReason === 'trainer battle'`
         ),
       6000,
       30
@@ -2453,6 +2696,59 @@ async function main() {
     })`);
     assert.equal(emeraldTrainerStop.statusText, 'Auto-Fight stopped: trainer battle');
     assert.equal(emeraldTrainerStop.isError, true);
+
+    // Auto A stops on move-learning prompt during trainer battle and on fainting
+    await client.eval(`document.getElementById('auto-a-btn').click()`);
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), true);
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._gba_write32(emu.e, 0x02024214, 0x082dabe3 + 4);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoA().active === false && window.__retroIdle.getAutoA().stopReason === 'learning a move'`
+        ),
+      6000,
+      30
+    );
+    const emeraldAutoALearnStop = await client.eval(`({
+      statusText: document.getElementById('auto-fight-status').textContent,
+      isError: document.getElementById('auto-fight-status').classList.contains('error'),
+    })`);
+    assert.equal(emeraldAutoALearnStop.statusText, 'Auto A stopped: learning a move');
+    assert.equal(emeraldAutoALearnStop.isError, true);
+
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._gba_write32(emu.e, 0x02024214, 0);
+      })()
+    `);
+    await client.eval(`document.getElementById('auto-a-btn').click()`);
+    assert.equal(await client.eval(`window.__retroIdle.getAutoA().active`), true);
+    await client.eval(`
+      (() => {
+        const emu = window.__retroIdle.getEmulator();
+        emu.module._gba_write16(emu.e, 0x02024084 + 0x28, 0);
+      })()
+    `);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getAutoA().active === false && window.__retroIdle.getAutoA().stopReason === 'fainted'`
+        ),
+      6000,
+      30
+    );
+    const emeraldAutoAFaintStop = await client.eval(`({
+      statusText: document.getElementById('auto-fight-status').textContent,
+      isError: document.getElementById('auto-fight-status').classList.contains('error'),
+    })`);
+    assert.equal(emeraldAutoAFaintStop.statusText, 'Auto A stopped: fainted');
+    assert.equal(emeraldAutoAFaintStop.isError, true);
 
     const prefsRefreshCheck = {
       reloadOn: {

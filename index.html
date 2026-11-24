@@ -325,6 +325,8 @@
     .pad-right {
       grid-area: ab;
       display: flex;
+      flex-direction: column;
+      gap: 8px;
       align-items: center;
       justify-content: center;
     }
@@ -455,6 +457,32 @@
     .gb-action-btn.pressed {
       background: #dc2626;
       border-color: #fca5a5;
+      color: #ffffff;
+      transform: scale(0.95);
+    }
+
+    .gb-turbo-btn {
+      min-width: 96px;
+      min-height: 28px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      touch-action: none;
+      background: #451a03;
+      border: 1px solid #d97706;
+      color: #fde68a;
+      transition: transform 60ms ease, background-color 60ms ease, border-color 60ms ease, color 60ms ease;
+    }
+
+    .gb-turbo-btn:not(:disabled):hover {
+      border-color: #f59e0b;
+    }
+
+    .gb-turbo-btn.pressed {
+      background: #d97706;
+      border-color: #fef08a;
       color: #ffffff;
       transform: scale(0.95);
     }
@@ -672,6 +700,7 @@
       <button type="button" id="import-sav-btn" disabled>Import .sav</button>
       <input type="file" id="sav-input" accept=".sav" />
       <button type="button" id="auto-fight-btn" aria-pressed="false" disabled title="Pokémon Red / Blue / Yellow / Crystal / Emerald">Auto-Fight</button>
+      <button type="button" id="auto-a-btn" aria-pressed="false" disabled title="Auto-mash A (V) — stops on move learning &amp; fainting in supported Pokémon games">Auto A</button>
       <button type="button" id="mute-btn" class="active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen controls">Touch Pad</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
@@ -709,6 +738,7 @@
           <button type="button" class="gb-action-btn gb-btn-b" data-gb-btn="b" aria-label="B button">B</button>
           <button type="button" class="gb-action-btn gb-btn-a" data-gb-btn="a" aria-label="A button">A</button>
         </div>
+        <button type="button" class="gb-turbo-btn" data-gb-btn="turboA" aria-label="Turbo A button">TURBO A</button>
       </div>
       <div class="pad-center">
         <button type="button" class="gb-meta-btn" data-gb-btn="select">SELECT</button>
@@ -720,6 +750,8 @@
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
       A: <kbd>X</kbd> &middot;
       B: <kbd>Z</kbd> &middot;
+      Turbo A: <kbd>C</kbd> &middot;
+      Auto A: <kbd>V</kbd> &middot;
       L/R: <kbd>Q</kbd>/<kbd>E</kbd> &middot;
       Start: <kbd>Enter</kbd> &middot;
       Select: <kbd>Shift</kbd> &middot;
@@ -732,6 +764,9 @@
   <script src="./vendor/binjgb/binjgb.js"></script>
   <script type="module">
     import {
+      TURBO_A_OFF_FRAMES,
+      TURBO_A_ON_FRAMES,
+      createAutoA,
       createAutoFight,
       getAutoFightProfile,
     } from './autofight.js';
@@ -816,6 +851,7 @@
       KeyD: 'right',
       KeyX: 'a',
       KeyZ: 'b',
+      KeyC: 'turboA',
       KeyQ: 'l',
       KeyE: 'r',
       Enter: 'start',
@@ -843,6 +879,7 @@
     const importSavBtn = document.getElementById('import-sav-btn');
     const savInput = document.getElementById('sav-input');
     const autoFightBtn = document.getElementById('auto-fight-btn');
+    const autoABtn = document.getElementById('auto-a-btn');
     const muteBtn = document.getElementById('mute-btn');
     const touchPadBtn = document.getElementById('touch-pad-btn');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
@@ -888,6 +925,10 @@
     let pipHiddenPauseTimer = 0;
 
     const autoFight = createAutoFight();
+    const autoA = createAutoA();
+    let autoAPulseOn = false;
+    let turboAFrame = 0;
+    let turboAPulseOn = false;
     let currentAutoFightProfile = null;
     let lastAutoFightText = '';
     let lastAutoFightIsError = false;
@@ -1091,40 +1132,68 @@
       return { platform: 'gb', title, gameCode: '', mbc, typeCode };
     }
 
-    function readControllerInputState(overrideButtons) {
-      if (overrideButtons) {
-        return { ...overrideButtons };
-      }
+    function readGamepadState() {
       const next = {
-        up: heldKeys.has('up') || heldTouchButtons.has('up'),
-        down: heldKeys.has('down') || heldTouchButtons.has('down'),
-        left: heldKeys.has('left') || heldTouchButtons.has('left'),
-        right: heldKeys.has('right') || heldTouchButtons.has('right'),
-        a: heldKeys.has('a') || heldTouchButtons.has('a'),
-        b: heldKeys.has('b') || heldTouchButtons.has('b'),
-        start: heldKeys.has('start') || heldTouchButtons.has('start'),
-        select: heldKeys.has('select') || heldTouchButtons.has('select'),
-        l: heldKeys.has('l') || heldTouchButtons.has('l'),
-        r: heldKeys.has('r') || heldTouchButtons.has('r'),
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        a: false,
+        b: false,
+        start: false,
+        select: false,
+        l: false,
+        r: false,
+        turboA: false,
       };
-
       const pads = navigator.getGamepads ? navigator.getGamepads() : [];
       for (const pad of pads) {
         if (!pad || !pad.connected) continue;
         const b = pad.buttons || [];
         const ax = pad.axes || [];
         const pressed = (idx) => Boolean(b[idx] && (b[idx].pressed || b[idx].value > 0.5));
-        next.a ||= pressed(0);
-        next.b ||= pressed(1);
-        next.l ||= pressed(4);
-        next.r ||= pressed(5);
-        next.select ||= pressed(8);
-        next.start ||= pressed(9);
-        next.up ||= pressed(12) || (ax[1] ?? 0) < -0.5;
-        next.down ||= pressed(13) || (ax[1] ?? 0) > 0.5;
-        next.left ||= pressed(14) || (ax[0] ?? 0) < -0.5;
-        next.right ||= pressed(15) || (ax[0] ?? 0) > 0.5;
+        next.a = pressed(0);
+        next.b = pressed(1);
+        next.turboA = pressed(3);
+        next.l = pressed(4);
+        next.r = pressed(5);
+        next.select = pressed(8);
+        next.start = pressed(9);
+        next.up = pressed(12) || (ax[1] ?? 0) < -0.5;
+        next.down = pressed(13) || (ax[1] ?? 0) > 0.5;
+        next.left = pressed(14) || (ax[0] ?? 0) < -0.5;
+        next.right = pressed(15) || (ax[0] ?? 0) > 0.5;
         break;
+      }
+      return next;
+    }
+
+    function isTurboAHeld() {
+      return heldKeys.has('turboA') || heldTouchButtons.has('turboA') || readGamepadState().turboA;
+    }
+
+    function readControllerInputState(overrideButtons) {
+      if (overrideButtons) {
+        return { ...overrideButtons };
+      }
+      const pad = readGamepadState();
+      const next = {
+        up: heldKeys.has('up') || heldTouchButtons.has('up') || pad.up,
+        down: heldKeys.has('down') || heldTouchButtons.has('down') || pad.down,
+        left: heldKeys.has('left') || heldTouchButtons.has('left') || pad.left,
+        right: heldKeys.has('right') || heldTouchButtons.has('right') || pad.right,
+        a: heldKeys.has('a') || heldTouchButtons.has('a') || pad.a,
+        b: heldKeys.has('b') || heldTouchButtons.has('b') || pad.b,
+        start: heldKeys.has('start') || heldTouchButtons.has('start') || pad.start,
+        select: heldKeys.has('select') || heldTouchButtons.has('select') || pad.select,
+        l: heldKeys.has('l') || heldTouchButtons.has('l') || pad.l,
+        r: heldKeys.has('r') || heldTouchButtons.has('r') || pad.r,
+      };
+      const turboHeld = heldKeys.has('turboA') || heldTouchButtons.has('turboA') || pad.turboA;
+      if (turboHeld) {
+        next.a = turboAPulseOn;
+      } else if (autoA.getState().active) {
+        next.a = autoAPulseOn;
       }
       return next;
     }
@@ -1982,6 +2051,12 @@
       pipUi.autoFightBtn.textContent = autoActive ? 'Stop' : 'Auto-Fight';
       pipUi.autoFightBtn.classList.toggle('active', autoActive);
 
+      const autoAActive = autoA.getState().active;
+      pipUi.autoABtn.disabled = !loaded || isBusy;
+      pipUi.autoABtn.textContent = autoAActive ? 'Stop A' : 'Auto A';
+      pipUi.autoABtn.classList.toggle('active', autoAActive);
+      pipUi.autoABtn.setAttribute('aria-pressed', autoAActive ? 'true' : 'false');
+
       pipUi.speedBtn.textContent = `${currentSpeed}x`;
       pipUi.speedBtn.classList.toggle('active', currentSpeed > 1);
 
@@ -2021,7 +2096,18 @@
       syncMiniPlayerUi();
     }
 
-    function stopAutoFight(reason = null, { preservePreference = false } = {}) {
+    function syncAutoAButton() {
+      const loaded = Boolean(emu);
+      const active = autoA.getState().active;
+      autoABtn.disabled = !loaded || isBusy;
+      autoABtn.textContent = active ? 'Stop Auto A' : 'Auto A';
+      autoABtn.classList.toggle('active', active);
+      autoABtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      syncMiniPlayerUi();
+    }
+
+    function stopAutoFight(reason = null, { preservePreference = false, clearStatus = false } = {}) {
+      const wasActive = autoFight.getState().active;
       autoFight.stop(reason || 'manual');
       if (!preservePreference) {
         autoFightStoppedOnHide = false;
@@ -2029,8 +2115,22 @@
       }
       emu?.setOverrideButtons(null);
       syncAutoFightButton();
-      const showReason = Boolean(reason && reason !== 'manual');
-      setAutoFightStatus(showReason ? `Auto-Fight stopped: ${reason}` : '', { isError: showReason });
+      if (wasActive || reason !== null || clearStatus) {
+        const showReason = Boolean(reason && reason !== 'manual');
+        setAutoFightStatus(showReason ? `Auto-Fight stopped: ${reason}` : '', { isError: showReason });
+      }
+    }
+
+    function stopAutoA(reason = null, { clearStatus = false } = {}) {
+      const wasActive = autoA.getState().active;
+      autoA.stop(reason || 'manual');
+      autoAPulseOn = false;
+      emu?.syncInput();
+      syncAutoAButton();
+      if (wasActive || reason !== null || clearStatus) {
+        const showReason = Boolean(reason && reason !== 'manual');
+        setAutoFightStatus(showReason ? `Auto A stopped: ${reason}` : '', { isError: showReason });
+      }
     }
 
     function formatAutoFightPhase(res, state) {
@@ -2061,17 +2161,60 @@
     }
 
     function onEmulatorFrame() {
-      if (!emu || !currentAutoFightProfile) return;
-      if (autoFight.getState().active) {
+      if (!emu) return;
+      if (currentAutoFightProfile && autoFight.getState().active) {
         stepAutoFight();
-      } else {
-        autoFight.observe(currentAutoFightProfile.readOverworldPos((a) => emu.readWramLinear(a)));
+        syncHealCenterStatus();
+        return;
       }
-      syncHealCenterStatus();
+
+      let needSync = false;
+      if (autoA.getState().active) {
+        const snap = currentAutoFightProfile
+          ? currentAutoFightProfile.readSnapshot((a) => emu.readWramLinear(a))
+          : null;
+        const res = autoA.step(snap);
+        if (!res.active) {
+          stopAutoA(res.stopReason);
+        } else if (res.a !== autoAPulseOn) {
+          autoAPulseOn = res.a;
+          needSync = true;
+        }
+      }
+
+      if (isTurboAHeld()) {
+        if (!turboAPulseOn && turboAFrame === 0) {
+          turboAPulseOn = true;
+          needSync = true;
+        } else {
+          turboAFrame = (turboAFrame + 1) % (TURBO_A_ON_FRAMES + TURBO_A_OFF_FRAMES);
+          const nextOn = turboAFrame < TURBO_A_ON_FRAMES;
+          if (nextOn !== turboAPulseOn) {
+            turboAPulseOn = nextOn;
+            needSync = true;
+          }
+        }
+      } else if (turboAFrame !== 0 || turboAPulseOn) {
+        turboAFrame = 0;
+        turboAPulseOn = false;
+        needSync = true;
+      }
+
+      if (needSync) {
+        emu.syncInput();
+      }
+
+      if (currentAutoFightProfile) {
+        autoFight.observe(currentAutoFightProfile.readOverworldPos((a) => emu.readWramLinear(a)));
+        syncHealCenterStatus();
+      }
     }
 
     function startAutoFight() {
       if (!emu || isBusy || !currentAutoFightProfile) return;
+      if (autoA.getState().active) {
+        stopAutoA();
+      }
       if (emu.isPaused) {
         emu.resume();
         syncControls();
@@ -2085,6 +2228,46 @@
       blurActiveElement();
     }
 
+    function startAutoA() {
+      if (!emu || isBusy) return;
+      if (autoFight.getState().active) {
+        stopAutoFight();
+      }
+      if (emu.isPaused) {
+        emu.resume();
+        syncControls();
+      }
+      const snap = currentAutoFightProfile
+        ? currentAutoFightProfile.readSnapshot((a) => emu.readWramLinear(a))
+        : null;
+      autoA.start(snap);
+      const activeText = currentAutoFightProfile
+        ? 'Auto A: active (move-learn & faint guard)'
+        : 'Auto A: active';
+      setAutoFightStatus(activeText);
+      const first = autoA.step(snap);
+      if (!first.active) {
+        stopAutoA(first.stopReason);
+        blurActiveElement();
+        return;
+      }
+      autoAPulseOn = first.a;
+      emu.syncInput();
+      syncAutoAButton();
+      blurActiveElement();
+    }
+
+    function toggleAutoA() {
+      if (!emu || isBusy) return;
+      resumeAudioSafely();
+      if (autoA.getState().active) {
+        stopAutoA('manual');
+      } else {
+        startAutoA();
+      }
+      blurActiveElement();
+    }
+
     function setActionButtonsDisabled() {
       const loaded = Boolean(emu);
       togglePlayBtn.disabled = !loaded || isBusy;
@@ -2095,6 +2278,7 @@
       exportSavBtn.disabled = !canUseSav;
       importSavBtn.disabled = !canUseSav;
       syncAutoFightButton();
+      syncAutoAButton();
       syncMiniPlayerButton();
       syncMiniPlayerUi();
     }
@@ -2230,6 +2414,7 @@
       return runTransportAction(async () => {
         if (emu.isPlaying) {
           stopAutoFight();
+          stopAutoA();
           emu.pause();
           await flushEmulatorPersistence();
         } else {
@@ -2270,6 +2455,11 @@
       pipWindow = null;
       pipUi = null;
       heldKeys.clear();
+      if (!isTurboAHeld()) {
+        turboAFrame = 0;
+        turboAPulseOn = false;
+        emu?.syncInput();
+      }
 
       win.removeEventListener('keydown', handleKeyDown);
       win.removeEventListener('keyup', handleKeyUp);
@@ -2343,6 +2533,7 @@
 
         const pipTogglePlayBtn = makePipButton('toggle-play', 'Pause', togglePlayPause);
         const pipAutoFightBtn = makePipButton('auto-fight', 'Auto-Fight', toggleAutoFight);
+        const pipAutoABtn = makePipButton('auto-a', 'Auto A', toggleAutoA);
         const pipSpeedBtn = makePipButton('speed', `${currentSpeed}x`, cycleSpeed);
         const pipMuteBtn = makePipButton('mute', isMuted ? 'Unmute' : 'Mute', toggleMute);
         const pipReturnActionBtn = makePipButton('return', 'Return to Tab', () => {
@@ -2350,7 +2541,7 @@
           teardownMiniPlayer({ closeWindow: true, focusMain: true });
         });
 
-        controls.append(pipTogglePlayBtn, pipAutoFightBtn, pipSpeedBtn, pipMuteBtn, pipReturnActionBtn);
+        controls.append(pipTogglePlayBtn, pipAutoFightBtn, pipAutoABtn, pipSpeedBtn, pipMuteBtn, pipReturnActionBtn);
 
         const statusBox = doc.createElement('div');
         statusBox.className = 'pip-status';
@@ -2377,6 +2568,7 @@
         pipUi = {
           togglePlayBtn: pipTogglePlayBtn,
           autoFightBtn: pipAutoFightBtn,
+          autoABtn: pipAutoABtn,
           speedBtn: pipSpeedBtn,
           muteBtn: pipMuteBtn,
           returnBtn: pipReturnActionBtn,
@@ -2516,7 +2708,8 @@
           throw new Error('Unsupported ROM source; provide a local .gb / .gbc / .gba file');
         }
 
-        stopAutoFight(null, { preservePreference: restoreAutoFight });
+        stopAutoFight(null, { preservePreference: restoreAutoFight, clearStatus: true });
+        stopAutoA(null, { clearStatus: true });
         clearTouchInput();
         await flushEmulatorPersistence();
         autoFight.clearTrail();
@@ -2629,7 +2822,8 @@
     togglePlayBtn.addEventListener('click', togglePlayPause);
 
     async function rebootWithSram(sramBytes) {
-      stopAutoFight();
+      stopAutoFight(null, { clearStatus: true });
+      stopAutoA(null, { clearStatus: true });
       clearTouchInput();
       autoFight.clearTrail();
       clearTimeout(sramFlushTimer);
@@ -2667,7 +2861,8 @@
 
     loadStateBtn.addEventListener('click', () =>
       runTransportAction(async () => {
-        stopAutoFight();
+        stopAutoFight(null, { clearStatus: true });
+        stopAutoA(null, { clearStatus: true });
         const [state, savedTrail] = await Promise.all([
           dbGet(`manualState:${currentRomId}`),
           currentAutoFightProfile ? dbGet(`manualPokeTrail:${currentRomId}`) : Promise.resolve(null),
@@ -2694,6 +2889,7 @@
     }
 
     autoFightBtn.addEventListener('click', toggleAutoFight);
+    autoABtn.addEventListener('click', toggleAutoA);
     muteBtn.addEventListener('click', toggleMute);
 
     miniPlayerBtn.addEventListener('click', () => {
@@ -2765,10 +2961,17 @@
 
     function handleKeyDown(e) {
       resumeAudioSafely();
-      if (e.code === 'Escape' && autoFight.getState().active) {
-        stopAutoFight('manual');
-        e.preventDefault();
-        return;
+      if (e.code === 'Escape') {
+        if (autoFight.getState().active) {
+          stopAutoFight('manual');
+          e.preventDefault();
+          return;
+        }
+        if (autoA.getState().active) {
+          stopAutoA('manual');
+          e.preventDefault();
+          return;
+        }
       }
       const speedChoice = SPEED_KEY_MAP[e.code];
       if (
@@ -2795,10 +2998,29 @@
         e.preventDefault();
         return;
       }
+      if (
+        e.code === 'KeyV' &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !isInteractiveElementFocused(e)
+      ) {
+        if (!e.repeat) {
+          toggleAutoA();
+        }
+        e.preventDefault();
+        return;
+      }
       const btn = KEY_MAP[e.code];
       if (!btn || e.ctrlKey || e.altKey || e.metaKey) return;
       if (isInteractiveElementFocused(e)) return;
+      const wasTurboHeld = btn === 'turboA' && isTurboAHeld();
       heldKeys.add(btn);
+      if (btn === 'turboA' && !wasTurboHeld) {
+        turboAFrame = 0;
+        turboAPulseOn = true;
+        emu?.syncInput();
+      }
       e.preventDefault();
     }
 
@@ -2806,6 +3028,11 @@
       const btn = KEY_MAP[e.code];
       if (!btn) return;
       heldKeys.delete(btn);
+      if (btn === 'turboA' && !isTurboAHeld()) {
+        turboAFrame = 0;
+        turboAPulseOn = false;
+        emu?.syncInput();
+      }
     }
 
     function computeDpadDirs(dpadEl, clientX, clientY) {
@@ -2831,6 +3058,8 @@
         for (const b of btns) next.add(b);
       }
 
+      const wasTurboTouchHeld = heldTouchButtons.has('turboA');
+      const wasTurboHeld = wasTurboTouchHeld || heldKeys.has('turboA') || readGamepadState().turboA;
       let changed = next.size !== heldTouchButtons.size;
       let hasNewPress = false;
       for (const b of next) {
@@ -2848,6 +3077,15 @@
         for (const el of els) {
           el.classList.toggle('pressed', pressed);
         }
+      }
+
+      const nowTurboTouchHeld = heldTouchButtons.has('turboA');
+      if (!wasTurboTouchHeld && nowTurboTouchHeld && !wasTurboHeld) {
+        turboAFrame = 0;
+        turboAPulseOn = true;
+      } else if (wasTurboTouchHeld && !nowTurboTouchHeld && !isTurboAHeld()) {
+        turboAFrame = 0;
+        turboAPulseOn = false;
       }
 
       if (vibrateOnNew && hasNewPress && typeof navigator.vibrate === 'function') {
@@ -2953,6 +3191,11 @@
     function handleWindowBlur() {
       heldKeys.clear();
       clearTouchInput();
+      if (!isTurboAHeld()) {
+        turboAFrame = 0;
+        turboAPulseOn = false;
+        emu?.syncInput();
+      }
     }
 
     function handleDocumentHidden() {
@@ -2960,6 +3203,9 @@
       if (autoFight.getState().active) {
         autoFightStoppedOnHide = true;
         stopAutoFight(null, { preservePreference: true });
+      }
+      if (autoA.getState().active) {
+        stopAutoA();
       }
       writeUnloadSnapshot();
       releaseWakeLock();
@@ -3089,6 +3335,15 @@
           emu && currentAutoFightProfile
             ? currentAutoFightProfile.readSnapshot((a) => emu.readWramLinear(a))
             : null,
+      }),
+      getAutoA: () => ({
+        ...autoA.getState(),
+        pulseOn: autoAPulseOn,
+        turboHeld: isTurboAHeld(),
+        turboPulseOn: turboAPulseOn,
+        start: startAutoA,
+        stop: stopAutoA,
+        toggle: toggleAutoA,
       }),
     };
   </script>

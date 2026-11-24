@@ -15,8 +15,9 @@ Browser Game Boy, Game Boy Color, and Game Boy Advance emulator with built-in id
 - **Portable saves & states:** Manual **Save State** / **Load State**, plus **Export `.sav`** / **Import `.sav`** compatible with desktop emulators (32 KB GB/GBC SRAM and GBA SRAM / 128 KB Flash).
 - **Emulator speed controls:** Switch between `1x`, `2x`, `4x`, `10x`, and `20x` speed via the UI buttons or number keys (`1`–`5`); audio automatically mutes above `1x`.
 - **Default-muted audio:** Emulator audio starts muted by default (`Unmute` / `Mute` button in the main controls and Mini-Player, or `M` hotkey, persisted across refreshes).
-- **Mobile & touch support:** Automatically displays multi-touch controls (thumb-slide D-Pad, B/A, Start/Select, plus L/R shoulder buttons in GBA mode) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
-- **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, speed, and mute controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
+- **Turbo A & Auto A:** Hold `C` (or the Touch Pad **TURBO A** button / Gamepad `Y`) to rapidly pulse `A` at any emulator speed while playing manually, or toggle **Auto A** (`V` / toolbar button / Mini-Player) for hands-free `A` mashing on any ROM — automatically stopping on **learning a move** or **fainting** in supported Pokémon games while continuing passive Heal Center trail recording.
+- **Mobile & touch support:** Automatically displays multi-touch controls (thumb-slide D-Pad, B/A, holdable **TURBO A**, Start/Select, plus L/R shoulder buttons in GBA mode) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
+- **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, Auto A, speed, and mute controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
 - **Pokémon Red / Blue / Yellow / Crystal / Emerald Auto-Fight** ([autofight.js](autofight.js)):
   - Automatically enabled when a `POKEMON RED`, `POKEMON BLUE`, `POKEMON YELLOW`, Pokémon Crystal (`PM_CRYSTAL`), or English Pokémon Emerald (`POKEMON EMER` / `BPEE`) ROM is loaded.
   - Paces back and forth around your starting tile (rotating directions if blocked) and fights wild encounters by selecting `FIGHT` and your first attacking move with `PP > 0` (skipping non-damaging moves like Growl or False Swipe).
@@ -29,11 +30,13 @@ Browser Game Boy, Game Boy Color, and Game Boy Advance emulator with built-in id
 | :--- | :--- |
 | D-Pad | `Arrow Keys` or `WASD` |
 | A / B | `X` / `Z` |
+| Turbo A (hold) | `C` or Touch `TURBO A` |
+| Auto A (toggle) | `V` or `Auto A` button |
 | L / R (GBA) | `Q` / `E` |
 | Start / Select | `Enter` / `Shift` or `Tab` |
 | Speed (1x–20x) | `1`–`5` |
 | Mute / Unmute | `M` |
-| Stop Auto-Fight | `Escape` |
+| Stop Auto-Fight / Auto A | `Escape` |
 | Gamepad | Standard Gamepad API mapping |
 
 ## Run Locally & Test
