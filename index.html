@@ -636,7 +636,7 @@
     }
 
     @media (orientation: landscape) and (max-height: 540px) {
-      body.touch-controls-visible {
+      body.touch-controls-visible:not(.fullscreen-mode) {
         padding:
           max(4px, env(safe-area-inset-top))
           max(8px, env(safe-area-inset-right))
@@ -645,7 +645,7 @@
         align-content: start;
       }
 
-      body.touch-controls-visible main {
+      body.touch-controls-visible:not(.fullscreen-mode) main {
         width: 100%;
         max-width: 100%;
         padding: 4px 6px;
@@ -660,12 +660,12 @@
         row-gap: 6px;
       }
 
-      body.touch-controls-visible main > h1,
-      body.touch-controls-visible main > .legend {
+      body.touch-controls-visible:not(.fullscreen-mode) main > h1,
+      body.touch-controls-visible:not(.fullscreen-mode) main > .legend {
         display: none;
       }
 
-      body.touch-controls-visible .screen-slot {
+      body.touch-controls-visible:not(.fullscreen-mode) .screen-slot {
         grid-column: 2;
         grid-row: 1;
         order: initial;
@@ -675,39 +675,39 @@
         aspect-ratio: var(--screen-w) / var(--screen-h);
       }
 
-      body.touch-controls-visible .touch-gamepad {
+      body.touch-controls-visible:not(.fullscreen-mode) .touch-gamepad {
         display: contents;
       }
 
-      body.touch-controls-visible .pad-shoulders {
+      body.touch-controls-visible:not(.fullscreen-mode) .pad-shoulders {
         grid-column: 1 / -1;
         grid-row: 2;
         z-index: 1;
         padding: 0 10px;
       }
 
-      body.touch-controls-visible .pad-left {
+      body.touch-controls-visible:not(.fullscreen-mode) .pad-left {
         grid-column: 1;
         grid-row: 1;
       }
 
-      body.touch-controls-visible .pad-right {
+      body.touch-controls-visible:not(.fullscreen-mode) .pad-right {
         grid-column: 3;
         grid-row: 1;
       }
 
-      body.touch-controls-visible .pad-center {
+      body.touch-controls-visible:not(.fullscreen-mode) .pad-center {
         grid-column: 2;
         grid-row: 2;
         z-index: 2;
         gap: 14px;
       }
 
-      body.touch-controls-visible #status,
-      body.touch-controls-visible #auto-fight-status,
-      body.touch-controls-visible #heal-center-status,
-      body.touch-controls-visible .speed-controls,
-      body.touch-controls-visible .controls {
+      body.touch-controls-visible:not(.fullscreen-mode) #status,
+      body.touch-controls-visible:not(.fullscreen-mode) #auto-fight-status,
+      body.touch-controls-visible:not(.fullscreen-mode) #heal-center-status,
+      body.touch-controls-visible:not(.fullscreen-mode) .speed-controls,
+      body.touch-controls-visible:not(.fullscreen-mode) .controls {
         grid-column: 1 / -1;
         order: initial;
       }
@@ -720,6 +720,308 @@
       }
 
       body.touch-controls-visible .gb-action-btn {
+        width: 56px;
+        height: 56px;
+      }
+    }
+
+    body.fullscreen-mode {
+      padding: 0;
+      margin: 0;
+      min-height: 100dvh;
+      height: 100dvh;
+      width: 100vw;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body.fullscreen-mode main {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100dvh;
+      max-width: none;
+      padding: 0;
+      margin: 0;
+      background: #000;
+      border: none;
+      border-radius: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    body.fullscreen-mode main > h1,
+    body.fullscreen-mode main > .controls,
+    body.fullscreen-mode main > .speed-controls,
+    body.fullscreen-mode main > #status,
+    body.fullscreen-mode main > #auto-fight-status,
+    body.fullscreen-mode main > #heal-center-status,
+    body.fullscreen-mode main > .legend {
+      display: none !important;
+    }
+
+    body.fullscreen-mode .screen-slot {
+      position: relative;
+      z-index: 1;
+      order: initial;
+      width: min(100vw, calc(100dvh * var(--screen-w) / var(--screen-h)));
+      height: min(100dvh, calc(100vw * var(--screen-h) / var(--screen-w)));
+      max-width: 100vw;
+      max-height: 100dvh;
+      min-width: 0;
+      aspect-ratio: var(--screen-w) / var(--screen-h);
+    }
+
+    body.fullscreen-mode #screen {
+      width: 100%;
+      height: 100%;
+      border: none;
+      border-radius: 0;
+      background: #000;
+    }
+
+    body.fullscreen-mode .touch-gamepad {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      order: initial;
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      padding: 0;
+      pointer-events: none;
+    }
+
+    body.fullscreen-mode .pad-shoulders {
+      position: absolute;
+      top: max(10px, env(safe-area-inset-top));
+      left: max(14px, env(safe-area-inset-left));
+      right: max(14px, env(safe-area-inset-right));
+      width: auto;
+      padding: 0;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+
+    body.fullscreen-mode .pad-left {
+      position: absolute;
+      left: max(18px, env(safe-area-inset-left));
+      bottom: max(22px, env(safe-area-inset-bottom));
+      pointer-events: none;
+    }
+
+    body.fullscreen-mode #touch-dpad {
+      pointer-events: auto;
+    }
+
+    body.fullscreen-mode .pad-right {
+      position: absolute;
+      right: max(18px, env(safe-area-inset-right));
+      bottom: max(22px, env(safe-area-inset-bottom));
+      pointer-events: none;
+    }
+
+    body.fullscreen-mode .pad-center {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: max(10px, env(safe-area-inset-bottom));
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    body.fullscreen-mode .gb-action-btn,
+    body.fullscreen-mode .gb-turbo-btn,
+    body.fullscreen-mode .gb-meta-btn,
+    body.fullscreen-mode .gb-shoulder-btn {
+      pointer-events: auto;
+    }
+
+    body.fullscreen-mode .dpad-arm,
+    body.fullscreen-mode .dpad-center {
+      background: rgba(15, 23, 42, 0.48);
+      border-color: rgba(226, 232, 240, 0.42);
+      color: rgba(248, 250, 252, 0.9);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    body.fullscreen-mode .dpad-center::after {
+      background: rgba(15, 23, 42, 0.58);
+      border-color: rgba(226, 232, 240, 0.3);
+    }
+
+    body.fullscreen-mode .dpad-arm.pressed {
+      background: rgba(14, 116, 144, 0.78);
+      border-color: rgba(56, 189, 248, 0.95);
+      color: #ffffff;
+    }
+
+    body.fullscreen-mode .gb-action-btn {
+      background: rgba(153, 27, 27, 0.52);
+      border-color: rgba(248, 113, 113, 0.72);
+      color: rgba(254, 226, 226, 0.96);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+    }
+
+    body.fullscreen-mode .gb-action-btn.pressed {
+      background: rgba(220, 38, 38, 0.84);
+      border-color: rgba(254, 202, 202, 0.98);
+      color: #ffffff;
+    }
+
+    body.fullscreen-mode .gb-turbo-btn {
+      background: rgba(120, 53, 15, 0.54);
+      border-color: rgba(245, 158, 11, 0.75);
+      color: rgba(254, 243, 199, 0.96);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    body.fullscreen-mode .gb-turbo-btn.pressed {
+      background: rgba(217, 119, 6, 0.85);
+      border-color: rgba(254, 240, 138, 0.98);
+      color: #ffffff;
+    }
+
+    body.fullscreen-mode .gb-meta-btn,
+    body.fullscreen-mode .gb-shoulder-btn {
+      background: rgba(15, 23, 42, 0.48);
+      border-color: rgba(226, 232, 240, 0.42);
+      color: rgba(241, 245, 249, 0.92);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    body.fullscreen-mode .gb-meta-btn.pressed,
+    body.fullscreen-mode .gb-shoulder-btn.pressed {
+      background: rgba(14, 116, 144, 0.78);
+      border-color: rgba(56, 189, 248, 0.95);
+      color: #ffffff;
+    }
+
+    .fullscreen-hud {
+      position: fixed;
+      top: max(8px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      width: max-content;
+      max-width: calc(100vw - 184px);
+      pointer-events: none;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    body:not(.gba-mode) .fullscreen-hud {
+      max-width: calc(100vw - 24px);
+    }
+
+    .fs-hud-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 4px 6px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.58);
+      border: 1px solid rgba(148, 163, 184, 0.32);
+      backdrop-filter: blur(6px);
+      pointer-events: auto;
+    }
+
+    .fs-hud-btn {
+      font: inherit;
+      font-size: 0.72rem;
+      line-height: 1.15;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(30, 41, 59, 0.65);
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .fs-hud-btn.active {
+      border-color: var(--accent);
+      background: rgba(12, 74, 110, 0.85);
+      color: #f8fafc;
+    }
+
+    .fs-exit-btn {
+      border-color: rgba(248, 113, 113, 0.55);
+      background: rgba(127, 29, 29, 0.58);
+      color: #fee2e2;
+    }
+
+    .fs-exit-btn:not(:disabled):hover {
+      border-color: #f87171;
+    }
+
+    .fs-hud-status {
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      line-height: 1.25;
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: var(--text);
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .fs-hud-status.accent {
+      color: var(--accent);
+      border-color: rgba(56, 189, 248, 0.45);
+    }
+
+    .fs-hud-status.error {
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.55);
+    }
+
+    @media (orientation: portrait) {
+      body.fullscreen-mode .fullscreen-hud {
+        max-width: calc(100vw - 16px);
+      }
+
+      body.fullscreen-mode .pad-shoulders {
+        top: max(54px, calc(env(safe-area-inset-top) + 46px));
+      }
+
+      body.fullscreen-mode .pad-left,
+      body.fullscreen-mode .pad-right {
+        bottom: max(56px, calc(env(safe-area-inset-bottom) + 48px));
+      }
+
+      body.fullscreen-mode .pad-left {
+        left: max(12px, env(safe-area-inset-left));
+      }
+
+      body.fullscreen-mode .pad-right {
+        right: max(12px, env(safe-area-inset-right));
+      }
+
+      body.fullscreen-mode .dpad {
+        --dpad-size: 126px;
+        --dpad-arm: 42px;
+      }
+
+      body.fullscreen-mode .gb-action-btn {
         width: 56px;
         height: 56px;
       }
@@ -751,6 +1053,7 @@
       <button type="button" id="auto-a-btn" aria-pressed="false" disabled title="Auto-mash A (V) — stops on move learning &amp; fainting in supported Pokémon games">Auto A</button>
       <button type="button" id="mute-btn" class="active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
       <button type="button" id="touch-pad-btn" aria-pressed="false" title="Show or hide on-screen controls">Touch Pad</button>
+      <button type="button" id="fullscreen-btn" aria-pressed="false" title="Landscape fullscreen with overlay controls (F)">Fullscreen</button>
       <button type="button" id="mini-player-btn" disabled title="Pop out always-on-top mini-player (Chrome / Edge desktop)">Mini-Player</button>
       <button type="button" id="install-app-btn" hidden title="Install retro-idle as an app">Install App</button>
     </div>
@@ -795,6 +1098,19 @@
       </div>
     </section>
 
+    <div id="fullscreen-hud" class="fullscreen-hud" role="toolbar" aria-label="Fullscreen controls" hidden>
+      <div class="fs-hud-bar">
+        <button type="button" id="fs-toggle-play" class="fs-hud-btn" disabled>Pause</button>
+        <button type="button" id="fs-speed-btn" class="fs-hud-btn" title="Cycle emulator speed">1x</button>
+        <button type="button" id="fs-auto-fight-btn" class="fs-hud-btn" aria-pressed="false" hidden>Auto-Fight</button>
+        <button type="button" id="fs-auto-a-btn" class="fs-hud-btn" aria-pressed="false" disabled>Auto A</button>
+        <button type="button" id="fs-mute-btn" class="fs-hud-btn active" aria-pressed="true" title="Unmute audio (M)">Unmute</button>
+        <button type="button" id="fs-pad-btn" class="fs-hud-btn active" aria-pressed="true" title="Show or hide overlay gamepad">Pad</button>
+        <button type="button" id="fs-exit-btn" class="fs-hud-btn fs-exit-btn" title="Exit Fullscreen (F / Esc)">Exit</button>
+      </div>
+      <div id="fs-status" class="fs-hud-status" hidden></div>
+    </div>
+
     <p class="legend">
       D-Pad: <kbd>Arrows</kbd> or <kbd>WASD</kbd> &middot;
       A: <kbd>X</kbd> &middot;
@@ -806,6 +1122,7 @@
       Select: <kbd>Shift</kbd> &middot;
       Speed: <kbd>1</kbd>&ndash;<kbd>5</kbd> &middot;
       Mute: <kbd>M</kbd> &middot;
+      Fullscreen: <kbd>F</kbd> &middot;
       Gamepad supported
     </p>
   </main>
@@ -931,6 +1248,16 @@
     const autoABtn = document.getElementById('auto-a-btn');
     const muteBtn = document.getElementById('mute-btn');
     const touchPadBtn = document.getElementById('touch-pad-btn');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const fullscreenHudEl = document.getElementById('fullscreen-hud');
+    const fsTogglePlayBtn = document.getElementById('fs-toggle-play');
+    const fsSpeedBtn = document.getElementById('fs-speed-btn');
+    const fsAutoFightBtn = document.getElementById('fs-auto-fight-btn');
+    const fsAutoABtn = document.getElementById('fs-auto-a-btn');
+    const fsMuteBtn = document.getElementById('fs-mute-btn');
+    const fsPadBtn = document.getElementById('fs-pad-btn');
+    const fsExitBtn = document.getElementById('fs-exit-btn');
+    const fsStatusEl = document.getElementById('fs-status');
     const miniPlayerBtn = document.getElementById('mini-player-btn');
     const installAppBtn = document.getElementById('install-app-btn');
     const touchGamepadEl = document.getElementById('touch-gamepad');
@@ -991,6 +1318,10 @@
     const heldTouchButtons = new Set();
     const mobileLayoutQuery = window.matchMedia('(pointer: coarse), (max-width: 768px)');
     let touchControlsOverride = null;
+    let isFullscreen = false;
+    let fullscreenPadVisible = true;
+    let enteredNativeFullscreen = false;
+    let lockedOrientation = false;
     let wakeLockSentinel = null;
 
     async function requestWakeLock() {
@@ -1939,6 +2270,7 @@
       autoFightStatusEl.hidden = !text;
       autoFightStatusEl.classList.toggle('error', Boolean(text) && isError);
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     function syncHealCenterStatus() {
@@ -1951,6 +2283,7 @@
           healCenterStatusEl.classList.remove('linked');
           healCenterStatusEl.hidden = true;
           syncMiniPlayerUi();
+          syncFullscreenUi();
         }
         return;
       }
@@ -1976,6 +2309,7 @@
         healCenterStatusEl.classList.toggle('linked', linked);
         healCenterStatusEl.hidden = false;
         syncMiniPlayerUi();
+        syncFullscreenUi();
       }
     }
 
@@ -2032,6 +2366,7 @@
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       }
       syncMiniPlayerUi();
+      syncFullscreenUi();
       if (persist) {
         saveUiPrefs();
       }
@@ -2043,6 +2378,7 @@
       muteBtn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
       muteBtn.title = isMuted ? 'Unmute audio (M)' : 'Mute audio (M)';
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     function setMuted(muted, { persist = true } = {}) {
@@ -2135,6 +2471,146 @@
       }
     }
 
+    function getNativeFullscreenElement() {
+      return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    function syncFullscreenUi() {
+      fullscreenBtn.classList.toggle('active', isFullscreen);
+      fullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
+      fullscreenBtn.textContent = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+      fullscreenHudEl.hidden = !isFullscreen;
+
+      const loaded = Boolean(emu);
+      const playing = Boolean(emu?.isPlaying);
+      fsTogglePlayBtn.disabled = !loaded || isBusy;
+      fsTogglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
+
+      fsSpeedBtn.textContent = `${currentSpeed}x`;
+      fsSpeedBtn.classList.toggle('active', currentSpeed > 1);
+
+      const pokemonSupported = loaded && Boolean(currentAutoFightProfile);
+      const autoActive = autoFight.getState().active;
+      fsAutoFightBtn.hidden = !pokemonSupported;
+      fsAutoFightBtn.disabled = !pokemonSupported || isBusy;
+      fsAutoFightBtn.textContent = autoActive ? 'Stop' : 'Auto-Fight';
+      fsAutoFightBtn.classList.toggle('active', autoActive);
+      fsAutoFightBtn.setAttribute('aria-pressed', autoActive ? 'true' : 'false');
+
+      const autoAActive = autoA.getState().active;
+      fsAutoABtn.disabled = !loaded || isBusy;
+      fsAutoABtn.textContent = autoAActive ? 'Stop A' : 'Auto A';
+      fsAutoABtn.classList.toggle('active', autoAActive);
+      fsAutoABtn.setAttribute('aria-pressed', autoAActive ? 'true' : 'false');
+
+      fsMuteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+      fsMuteBtn.classList.toggle('active', isMuted);
+      fsMuteBtn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+      fsMuteBtn.title = isMuted ? 'Unmute audio (M)' : 'Mute audio (M)';
+
+      fsPadBtn.classList.toggle('active', fullscreenPadVisible);
+      fsPadBtn.setAttribute('aria-pressed', fullscreenPadVisible ? 'true' : 'false');
+
+      if (lastAutoFightText) {
+        fsStatusEl.textContent = lastAutoFightText;
+        fsStatusEl.hidden = false;
+        fsStatusEl.classList.toggle('error', lastAutoFightIsError);
+        fsStatusEl.classList.toggle('accent', !lastAutoFightIsError);
+      } else {
+        fsStatusEl.textContent = '';
+        fsStatusEl.hidden = true;
+        fsStatusEl.classList.remove('error', 'accent');
+      }
+    }
+
+    async function exitNativeFullscreen() {
+      if (!getNativeFullscreenElement()) return;
+      try {
+        if (typeof document.exitFullscreen === 'function') {
+          await document.exitFullscreen();
+        } else if (typeof document.webkitExitFullscreen === 'function') {
+          document.webkitExitFullscreen();
+        }
+      } catch {}
+    }
+
+    async function enterFullscreen() {
+      if (isFullscreen) return;
+      if (isMiniPlayerOpen()) {
+        teardownMiniPlayer({ closeWindow: true });
+      }
+      isFullscreen = true;
+      fullscreenPadVisible = touchControlsOverride !== false;
+      enteredNativeFullscreen = false;
+      document.body.classList.add('fullscreen-mode');
+      syncTouchControlsVisibility();
+      syncFullscreenUi();
+      blurActiveElement();
+
+      const target = document.documentElement;
+      try {
+        if (typeof target.requestFullscreen === 'function') {
+          try {
+            await target.requestFullscreen({ navigationUI: 'hide' });
+          } catch {
+            await target.requestFullscreen();
+          }
+        } else if (typeof target.webkitRequestFullscreen === 'function') {
+          target.webkitRequestFullscreen();
+        }
+      } catch {}
+
+      if (!isFullscreen) {
+        await exitNativeFullscreen();
+        return;
+      }
+
+      enteredNativeFullscreen = Boolean(getNativeFullscreenElement());
+      if (typeof screen.orientation?.lock === 'function') {
+        try {
+          await screen.orientation.lock('landscape');
+          lockedOrientation = isFullscreen;
+          if (!isFullscreen) {
+            screen.orientation?.unlock?.();
+          }
+        } catch {}
+      }
+    }
+
+    async function exitFullscreen() {
+      if (!isFullscreen) return;
+      isFullscreen = false;
+      enteredNativeFullscreen = false;
+      document.body.classList.remove('fullscreen-mode');
+      syncTouchControlsVisibility();
+      syncFullscreenUi();
+      blurActiveElement();
+
+      if (lockedOrientation) {
+        lockedOrientation = false;
+        try {
+          screen.orientation?.unlock?.();
+        } catch {}
+      }
+
+      await exitNativeFullscreen();
+    }
+
+    function toggleFullscreen() {
+      if (isFullscreen) {
+        return exitFullscreen();
+      }
+      return enterFullscreen();
+    }
+
+    function handleFullscreenChange() {
+      if (getNativeFullscreenElement()) {
+        enteredNativeFullscreen = true;
+      } else if (isFullscreen && enteredNativeFullscreen) {
+        exitFullscreen();
+      }
+    }
+
     function syncAutoFightButton() {
       const supported = Boolean(emu && currentAutoFightProfile);
       const active = autoFight.getState().active;
@@ -2144,6 +2620,7 @@
       autoFightBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
       syncHealCenterStatus();
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     function syncAutoAButton() {
@@ -2154,6 +2631,7 @@
       autoABtn.classList.toggle('active', active);
       autoABtn.setAttribute('aria-pressed', active ? 'true' : 'false');
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     function stopAutoFight(reason = null, { preservePreference = false, clearStatus = false } = {}) {
@@ -2331,6 +2809,7 @@
       syncAutoAButton();
       syncMiniPlayerButton();
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     function syncControls(statusSuffix = '') {
@@ -2338,12 +2817,14 @@
       if (!emu) {
         togglePlayBtn.textContent = 'Pause';
         syncMiniPlayerUi();
+        syncFullscreenUi();
         return;
       }
       const playing = emu.isPlaying;
       togglePlayBtn.textContent = playing ? 'Pause' : 'Resume';
       statusEl.textContent = `${playing ? 'Playing' : 'Paused'}: ${currentHeaderText}${statusSuffix}`;
       syncMiniPlayerUi();
+      syncFullscreenUi();
     }
 
     const PIP_STYLES = `
@@ -2544,6 +3025,9 @@
 
     async function openMiniPlayer() {
       if (!SUPPORTS_DOCUMENT_PIP || !emu || isBusy || isOpeningPip || isMiniPlayerOpen()) return;
+      if (isFullscreen) {
+        await exitFullscreen();
+      }
       isOpeningPip = true;
       syncMiniPlayerButton();
       try {
@@ -3022,6 +3506,24 @@
           e.preventDefault();
           return;
         }
+        if (isFullscreen) {
+          exitFullscreen();
+          e.preventDefault();
+          return;
+        }
+      }
+      if (
+        e.code === 'KeyF' &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !isInteractiveElementFocused(e)
+      ) {
+        if (!e.repeat) {
+          toggleFullscreen();
+        }
+        e.preventDefault();
+        return;
       }
       const speedChoice = SPEED_KEY_MAP[e.code];
       if (
@@ -3155,6 +3657,7 @@
     }
 
     function isTouchControlsVisible() {
+      if (isFullscreen) return fullscreenPadVisible;
       return touchControlsOverride !== null ? touchControlsOverride : mobileLayoutQuery.matches;
     }
 
@@ -3182,6 +3685,29 @@
       setTouchControlsOverride(!isTouchControlsVisible());
       blurActiveElement();
     });
+
+    fullscreenBtn.addEventListener('click', () => {
+      resumeAudioSafely();
+      toggleFullscreen();
+    });
+    fsTogglePlayBtn.addEventListener('click', togglePlayPause);
+    fsSpeedBtn.addEventListener('click', cycleSpeed);
+    fsAutoFightBtn.addEventListener('click', toggleAutoFight);
+    fsAutoABtn.addEventListener('click', toggleAutoA);
+    fsMuteBtn.addEventListener('click', toggleMute);
+    fsPadBtn.addEventListener('click', () => {
+      resumeAudioSafely();
+      fullscreenPadVisible = !fullscreenPadVisible;
+      syncTouchControlsVisibility();
+      syncFullscreenUi();
+      blurActiveElement();
+    });
+    fsExitBtn.addEventListener('click', () => {
+      resumeAudioSafely();
+      exitFullscreen();
+    });
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
     if (typeof mobileLayoutQuery.addEventListener === 'function') {
       mobileLayoutQuery.addEventListener('change', () => {
@@ -3405,6 +3931,7 @@
     setMuted(initialPrefs.muted, { persist: false });
     setTouchControlsOverride(initialPrefs.touchPad, { persist: false });
     syncMiniPlayerButton();
+    syncFullscreenUi();
     syncInstallButton();
     registerServiceWorker();
 
@@ -3453,6 +3980,19 @@
         held: Array.from(heldTouchButtons).sort(),
         setVisible: (val) => {
           setTouchControlsOverride(val);
+        },
+      }),
+      getFullscreen: () => ({
+        active: isFullscreen,
+        nativeActive: Boolean(getNativeFullscreenElement()),
+        padVisible: fullscreenPadVisible,
+        enter: enterFullscreen,
+        exit: exitFullscreen,
+        toggle: toggleFullscreen,
+        setPadVisible: (val) => {
+          fullscreenPadVisible = Boolean(val);
+          syncTouchControlsVisibility();
+          syncFullscreenUi();
         },
       }),
       getMiniPlayer: () => ({

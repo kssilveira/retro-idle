@@ -17,6 +17,7 @@ Browser Game Boy, Game Boy Color, and Game Boy Advance emulator with built-in id
 - **Default-muted audio:** Emulator audio starts muted by default (`Unmute` / `Mute` button in the main controls and Mini-Player, or `M` hotkey, persisted across refreshes).
 - **Turbo A & Auto A:** Hold `C` (or the Touch Pad **TURBO A** button / Gamepad `Y`) to rapidly pulse `A` at any emulator speed while playing manually, or toggle **Auto A** (`V` / toolbar button / Mini-Player) for hands-free `A` mashing on any ROM — automatically stopping on **learning a move** or **fainting** in supported Pokémon games while continuing passive Heal Center trail recording.
 - **Mobile & touch support:** Automatically displays multi-touch controls (thumb-slide D-Pad, B/A, holdable **TURBO A**, Start/Select, plus L/R shoulder buttons in GBA mode) on phones and tablets with responsive portrait & landscape handheld layouts, a manual **Touch Pad** toggle, mobile file-picker & touch audio unlock support, and Screen Wake Lock while playing.
+- **Landscape Fullscreen with overlay buttons:** Click **Fullscreen** (or press `F`) to expand the GB/GBC or GBA display edge-to-edge in landscape (with a full-viewport fallback where native fullscreen/orientation lock isn't available) alongside translucent multi-touch overlay controls and a compact floating HUD bar (Pause/Resume, Speed, Auto-Fight, Auto A, Mute, Pad toggle, Exit).
 - **Always-on-top Mini-Player:** Pop out an interactive Document Picture-in-Picture mini-player window on desktop Chrome/Edge with live Pause/Resume, Auto-Fight, Auto A, speed, and mute controls, Auto-Fight / Heal Center status, full keyboard input forwarding, and continuous background playback while the main tab is hidden.
 - **Installable PWA & offline play:** Install `retro-idle` to your home screen or desktop (`manifest.webmanifest` + Service Worker precaching the app shell, `binjgb`, and `mGBA` WASM cores + OS `.gb`/`.gbc`/`.gba` file handling) so previously loaded ROMs and saves work completely offline.
 - **Pokémon Red / Blue / Yellow / Crystal / Emerald Auto-Fight** ([autofight.js](autofight.js)):
@@ -37,7 +38,8 @@ Browser Game Boy, Game Boy Color, and Game Boy Advance emulator with built-in id
 | Start / Select | `Enter` / `Shift` or `Tab` |
 | Speed (1x–20x) | `1`–`5` |
 | Mute / Unmute | `M` |
-| Stop Auto-Fight / Auto A | `Escape` |
+| Fullscreen (overlay controls) | `F` |
+| Stop Auto-Fight / Auto A / Exit Fullscreen | `Escape` |
 | Gamepad | Standard Gamepad API mapping |
 
 ## Run Locally & Test

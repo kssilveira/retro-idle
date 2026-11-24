@@ -18,6 +18,8 @@ const CHROME_PROFILE = path.join(TMP_DIR, 'chrome-profile');
 const SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot.png');
 const MOBILE_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-mobile.png');
 const MOBILE_LANDSCAPE_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-mobile-landscape.png');
+const LANDSCAPE_FS_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-landscape-fullscreen.png');
+const GBA_LANDSCAPE_FS_SCREENSHOT_PATH = path.join(TMP_DIR, 'screenshot-gba-landscape-fullscreen.png');
 const HTTP_PORT = 18765;
 const CDP_PORT = 19222;
 
@@ -1437,6 +1439,208 @@ async function main() {
     const landscapeShot = await client.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(MOBILE_LANDSCAPE_SCREENSHOT_PATH, Buffer.from(landscapeShot.data, 'base64'));
 
+    // 2b. GB Landscape Fullscreen with translucent overlay controls (844x390)
+    const initialFsState = await client.eval(`({
+      fs: window.__retroIdle.getFullscreen(),
+      hudHidden: document.getElementById('fullscreen-hud').hidden,
+    })`);
+    assert.equal(initialFsState.fs.active, false, 'Fullscreen must be inactive initially');
+    assert.equal(initialFsState.hudHidden, true, '#fullscreen-hud must be hidden initially');
+
+    await client.eval(`document.getElementById('fullscreen-btn').click()`, { userGesture: true });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getFullscreen().active === true`),
+      5000,
+      30
+    );
+
+    const gbFsLayout = await client.eval(`(() => {
+      const screenRect = document.getElementById('screen').getBoundingClientRect();
+      const hudRect = document.getElementById('fullscreen-hud').getBoundingClientRect();
+      const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
+      const rightRect = document.querySelector('[data-gb-btn="right"]').getBoundingClientRect();
+      const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+      const bRect = document.querySelector('[data-gb-btn="b"]').getBoundingClientRect();
+      const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
+      const selectRect = document.querySelector('[data-gb-btn="select"]').getBoundingClientRect();
+      const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+      return {
+        bodyFsClass: document.body.classList.contains('fullscreen-mode'),
+        hudHidden: document.getElementById('fullscreen-hud').hidden,
+        touchVisible: window.__retroIdle.getTouchControls().visible,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        screenRect: screenRect.toJSON(),
+        hudRect: hudRect.toJSON(),
+        dpadRect: dpadRect.toJSON(),
+        aRect: aRect.toJSON(),
+        bRect: bRect.toJSON(),
+        turboARect: turboARect.toJSON(),
+        selectRect: selectRect.toJSON(),
+        startRect: startRect.toJSON(),
+        rightCenter: { x: Math.round(rightRect.left + rightRect.width / 2), y: Math.round(rightRect.top + rightRect.height / 2) },
+        aCenter: { x: Math.round(aRect.left + aRect.width / 2), y: Math.round(aRect.top + aRect.height / 2) },
+      };
+    })()`);
+    assert.equal(gbFsLayout.bodyFsClass, true, 'Expected body.fullscreen-mode');
+    assert.equal(gbFsLayout.hudHidden, false, 'Expected #fullscreen-hud visible in fullscreen');
+    assert.equal(gbFsLayout.touchVisible, true, 'Expected #touch-gamepad visible in fullscreen');
+    assert.ok(gbFsLayout.scrollWidth <= 844, `GB fullscreen horizontal overflow: ${gbFsLayout.scrollWidth}`);
+    assert.ok(gbFsLayout.scrollHeight <= 390, `GB fullscreen vertical overflow: ${gbFsLayout.scrollHeight}`);
+    assert.ok(gbFsLayout.screenRect.height >= 388, `Expected GB fullscreen canvas height >= 388, got ${gbFsLayout.screenRect.height}`);
+    assert.ok(
+      gbFsLayout.screenRect.height > landscapeLayout.screenBottom,
+      `Expected fullscreen canvas height (${gbFsLayout.screenRect.height}) > non-fullscreen bottom (${landscapeLayout.screenBottom})`
+    );
+    for (const [label, r] of [
+      ['hud', gbFsLayout.hudRect],
+      ['dpad', gbFsLayout.dpadRect],
+      ['a', gbFsLayout.aRect],
+      ['b', gbFsLayout.bRect],
+      ['turboA', gbFsLayout.turboARect],
+      ['select', gbFsLayout.selectRect],
+      ['start', gbFsLayout.startRect],
+    ]) {
+      assert.ok(
+        r.left >= -1 && r.top >= -1 && r.right <= 845 && r.bottom <= 391,
+        `GB fullscreen ${label} out of 844x390 bounds: ${JSON.stringify(r)}`
+      );
+    }
+    assert.ok(
+      gbFsLayout.dpadRect.right <= gbFsLayout.selectRect.left + 1,
+      `Expected D-Pad left of SELECT in GB fullscreen (${gbFsLayout.dpadRect.right} <= ${gbFsLayout.selectRect.left})`
+    );
+    assert.ok(
+      gbFsLayout.startRect.right <= gbFsLayout.bRect.left + 1,
+      `Expected START left of B in GB fullscreen (${gbFsLayout.startRect.right} <= ${gbFsLayout.bRect.left})`
+    );
+
+    // Multi-touch input in fullscreen overlay mode (D-Pad right + A)
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [
+        { x: gbFsLayout.rightCenter.x, y: gbFsLayout.rightCenter.y, id: 1 },
+        { x: gbFsLayout.aCenter.x, y: gbFsLayout.aCenter.y, id: 2 },
+      ],
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0x1b`),
+      5000,
+      30
+    );
+    assert.deepEqual(
+      await client.eval(`window.__retroIdle.getTouchControls().held`),
+      ['a', 'right'],
+      'Fullscreen multi-touch should register both a and right'
+    );
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4 && window.__retroIdle.getTouchControls().held.length === 0`),
+      5000,
+      30
+    );
+
+    // Floating HUD actions in fullscreen: Speed, Auto A + #fs-status, Mute, Pad toggle
+    await client.eval(`document.getElementById('fs-speed-btn').click()`);
+    const fsSpeed2 = await client.eval(`({
+      speed: window.__retroIdle.getSpeed(),
+      fsText: document.getElementById('fs-speed-btn').textContent,
+      main2Active: document.querySelector('.speed-btn[data-speed="2"]').classList.contains('active'),
+      activeTag: document.activeElement?.tagName,
+    })`);
+    assert.equal(fsSpeed2.speed, 2);
+    assert.equal(fsSpeed2.fsText, '2x');
+    assert.equal(fsSpeed2.main2Active, true);
+    assert.notEqual(fsSpeed2.activeTag, 'BUTTON', '#fs-speed-btn must blur after click');
+    await client.eval(`window.__retroIdle.setSpeed(1)`);
+
+    await client.eval(`document.getElementById('fs-auto-a-btn').click()`);
+    const fsAutoAOn = await client.eval(`({
+      active: window.__retroIdle.getAutoA().active,
+      btnText: document.getElementById('fs-auto-a-btn').textContent,
+      fsStatusHidden: document.getElementById('fs-status').hidden,
+      fsStatusText: document.getElementById('fs-status').textContent,
+    })`);
+    assert.equal(fsAutoAOn.active, true);
+    assert.equal(fsAutoAOn.btnText, 'Stop A');
+    assert.equal(fsAutoAOn.fsStatusHidden, false);
+    assert.equal(fsAutoAOn.fsStatusText, 'Auto A: active');
+    await client.eval(`document.getElementById('fs-auto-a-btn').click()`);
+    await waitFor(
+      async () => await client.eval(`!window.__retroIdle.getAutoA().active && document.getElementById('fs-status').hidden && window.__retroIdle.getEmulator().readMem(0xff47) === 0xe4`),
+      5000,
+      30
+    );
+
+    await client.eval(`document.getElementById('fs-mute-btn').click()`, { userGesture: true });
+    assert.equal(await client.eval(`window.__retroIdle.getAudio().muted`), false, '#fs-mute-btn should unmute');
+    await client.eval(`document.getElementById('fs-mute-btn').click()`, { userGesture: true });
+    assert.equal(await client.eval(`window.__retroIdle.getAudio().muted`), true, '#fs-mute-btn should re-mute');
+
+    await client.eval(`document.getElementById('fs-pad-btn').click()`);
+    assert.equal(await client.eval(`window.__retroIdle.getTouchControls().visible`), false, '#fs-pad-btn should hide overlay pad');
+    await client.eval(`document.getElementById('fs-pad-btn').click()`);
+    assert.equal(await client.eval(`window.__retroIdle.getTouchControls().visible`), true, '#fs-pad-btn should restore overlay pad');
+
+    const gbFsShot = await client.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(LANDSCAPE_FS_SCREENSHOT_PATH, Buffer.from(gbFsShot.data, 'base64'));
+
+    await client.eval(`document.getElementById('fs-exit-btn').click()`);
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getFullscreen().active === false && window.__retroIdle.getFullscreen().nativeActive === false && document.getElementById('fullscreen-hud').hidden === true`
+        ),
+      5000,
+      30
+    );
+
+    // KeyF enters fullscreen and Escape exits fullscreen
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'f',
+      code: 'KeyF',
+      windowsVirtualKeyCode: 70,
+      nativeVirtualKeyCode: 70,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'f',
+      code: 'KeyF',
+      windowsVirtualKeyCode: 70,
+      nativeVirtualKeyCode: 70,
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getFullscreen().active === true`),
+      5000,
+      30
+    );
+    await sleep(100);
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await client.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await waitFor(
+      async () =>
+        await client.eval(
+          `window.__retroIdle.getFullscreen().active === false && window.__retroIdle.getFullscreen().nativeActive === false`
+        ),
+      5000,
+      30
+    );
+
     await client.send('Emulation.setTouchEmulationEnabled', { enabled: false });
     await client.send('Emulation.clearDeviceMetricsOverride');
     await waitFor(
@@ -2510,6 +2714,145 @@ async function main() {
       `GBA landscape controls overflow 390px height (${JSON.stringify(gbaLandscapeLayout)})`
     );
 
+    // GBA Landscape Fullscreen (844x390): L/R shoulders clear of HUD, 3:2 canvas fills height, touch A works
+    await client.eval(`document.getElementById('fullscreen-btn').click()`, { userGesture: true });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getFullscreen().active === true`),
+      5000,
+      30
+    );
+    const gbaFsLayout = await client.eval(`(() => {
+      const screenRect = document.getElementById('screen').getBoundingClientRect();
+      const hudRect = document.getElementById('fullscreen-hud').getBoundingClientRect();
+      const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
+      const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
+      const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+      const aRect = document.querySelector('[data-gb-btn="a"]').getBoundingClientRect();
+      const bRect = document.querySelector('[data-gb-btn="b"]').getBoundingClientRect();
+      const turboARect = document.querySelector('[data-gb-btn="turboA"]').getBoundingClientRect();
+      const selectRect = document.querySelector('[data-gb-btn="select"]').getBoundingClientRect();
+      const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        screenRect: screenRect.toJSON(),
+        hudRect: hudRect.toJSON(),
+        dpadRect: dpadRect.toJSON(),
+        lRect: lRect.toJSON(),
+        rRect: rRect.toJSON(),
+        aRect: aRect.toJSON(),
+        bRect: bRect.toJSON(),
+        turboARect: turboARect.toJSON(),
+        selectRect: selectRect.toJSON(),
+        startRect: startRect.toJSON(),
+        aCenter: { x: Math.round(aRect.left + aRect.width / 2), y: Math.round(aRect.top + aRect.height / 2) },
+      };
+    })()`);
+    assert.ok(gbaFsLayout.scrollWidth <= 844, `GBA fullscreen horizontal overflow: ${gbaFsLayout.scrollWidth}`);
+    assert.ok(gbaFsLayout.scrollHeight <= 390, `GBA fullscreen vertical overflow: ${gbaFsLayout.scrollHeight}`);
+    assert.ok(gbaFsLayout.screenRect.height >= 388, `Expected GBA fullscreen canvas height >= 388, got ${gbaFsLayout.screenRect.height}`);
+    assert.ok(gbaFsLayout.screenRect.width >= 580, `Expected GBA 3:2 fullscreen canvas width >= 580, got ${gbaFsLayout.screenRect.width}`);
+    assert.ok(
+      gbaFsLayout.lRect.width > 40 && gbaFsLayout.lRect.height > 20,
+      `GBA fullscreen L button not visible: ${JSON.stringify(gbaFsLayout.lRect)}`
+    );
+    assert.ok(
+      gbaFsLayout.rRect.width > 40 && gbaFsLayout.rRect.height > 20,
+      `GBA fullscreen R button not visible: ${JSON.stringify(gbaFsLayout.rRect)}`
+    );
+    assert.ok(
+      gbaFsLayout.lRect.right <= gbaFsLayout.hudRect.left + 1,
+      `Expected L button left of HUD (${gbaFsLayout.lRect.right} <= ${gbaFsLayout.hudRect.left})`
+    );
+    assert.ok(
+      gbaFsLayout.hudRect.right <= gbaFsLayout.rRect.left + 1,
+      `Expected HUD left of R button (${gbaFsLayout.hudRect.right} <= ${gbaFsLayout.rRect.left})`
+    );
+    for (const [label, r] of [
+      ['hud', gbaFsLayout.hudRect],
+      ['l', gbaFsLayout.lRect],
+      ['r', gbaFsLayout.rRect],
+      ['dpad', gbaFsLayout.dpadRect],
+      ['a', gbaFsLayout.aRect],
+      ['b', gbaFsLayout.bRect],
+      ['turboA', gbaFsLayout.turboARect],
+      ['select', gbaFsLayout.selectRect],
+      ['start', gbaFsLayout.startRect],
+    ]) {
+      assert.ok(
+        r.left >= -1 && r.top >= -1 && r.right <= 845 && r.bottom <= 391,
+        `GBA fullscreen ${label} out of 844x390 bounds: ${JSON.stringify(r)}`
+      );
+    }
+    assert.ok(gbaFsLayout.dpadRect.right <= gbaFsLayout.selectRect.left + 1, 'D-Pad overlaps SELECT in GBA fullscreen');
+    assert.ok(gbaFsLayout.startRect.right <= gbaFsLayout.bRect.left + 1, 'START overlaps B in GBA fullscreen');
+
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: gbaFsLayout.aCenter.x, y: gbaFsLayout.aCenter.y, id: 1 }],
+    });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0x02000008) === 0x1b`),
+      5000,
+      30
+    );
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getEmulator().readMem(0x02000008) === 0xe4`),
+      5000,
+      30
+    );
+
+    const gbaFsShot = await client.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(GBA_LANDSCAPE_FS_SCREENSHOT_PATH, Buffer.from(gbaFsShot.data, 'base64'));
+
+    // Portrait fullscreen fallback check (390x844)
+    await client.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    const portraitFsLayout = await client.eval(`(() => {
+      const hudRect = document.getElementById('fullscreen-hud').getBoundingClientRect();
+      const lRect = document.querySelector('[data-gb-btn="l"]').getBoundingClientRect();
+      const rRect = document.querySelector('[data-gb-btn="r"]').getBoundingClientRect();
+      const dpadRect = document.getElementById('touch-dpad').getBoundingClientRect();
+      const bRect = document.querySelector('[data-gb-btn="b"]').getBoundingClientRect();
+      const selectRect = document.querySelector('[data-gb-btn="select"]').getBoundingClientRect();
+      const startRect = document.querySelector('[data-gb-btn="start"]').getBoundingClientRect();
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        hudRect: hudRect.toJSON(),
+        lRect: lRect.toJSON(),
+        rRect: rRect.toJSON(),
+        dpadRect: dpadRect.toJSON(),
+        bRect: bRect.toJSON(),
+        selectRect: selectRect.toJSON(),
+        startRect: startRect.toJSON(),
+      };
+    })()`);
+    assert.ok(portraitFsLayout.scrollWidth <= 390, `Portrait fullscreen horizontal overflow: ${portraitFsLayout.scrollWidth}`);
+    assert.ok(portraitFsLayout.scrollHeight <= 844, `Portrait fullscreen vertical overflow: ${portraitFsLayout.scrollHeight}`);
+    assert.ok(
+      portraitFsLayout.hudRect.bottom <= portraitFsLayout.lRect.top + 1 &&
+        portraitFsLayout.hudRect.bottom <= portraitFsLayout.rRect.top + 1,
+      `Portrait fullscreen HUD overlaps L/R: ${JSON.stringify(portraitFsLayout)}`
+    );
+    assert.ok(
+      portraitFsLayout.dpadRect.bottom <= portraitFsLayout.selectRect.top + 1 &&
+        portraitFsLayout.bRect.bottom <= portraitFsLayout.startRect.top + 1,
+      `Portrait fullscreen D-Pad/A/B overlaps SELECT/START: ${JSON.stringify(portraitFsLayout)}`
+    );
+
+    await client.eval(`document.getElementById('fs-exit-btn').click()`);
+    await waitFor(
+      async () => await client.eval(`window.__retroIdle.getFullscreen().active === false`),
+      5000,
+      30
+    );
+
     await client.send('Emulation.setTouchEmulationEnabled', { enabled: false });
     await client.send('Emulation.clearDeviceMetricsOverride');
     await waitFor(
@@ -3080,6 +3423,8 @@ async function main() {
         ),
         mobileScreenshot: MOBILE_SCREENSHOT_PATH,
         landscapeScreenshot: MOBILE_LANDSCAPE_SCREENSHOT_PATH,
+        landscapeFullscreenScreenshot: LANDSCAPE_FS_SCREENSHOT_PATH,
+        gbaLandscapeFullscreenScreenshot: GBA_LANDSCAPE_FS_SCREENSHOT_PATH,
       },
       pwaCheck,
       screenshot: SCREENSHOT_PATH,
